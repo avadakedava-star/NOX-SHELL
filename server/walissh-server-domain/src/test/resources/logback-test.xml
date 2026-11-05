@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  测试环境 logback 配置：
+  xfg-wrench jar 内嵌旧版 slf4j 1.7.x 的 StaticLoggerBinder，与 logback 1.5.x SPI 冲突，
+  指定本配置文件可绕过 ContextInitializer.autoConfig 的自动扫描。
+-->
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

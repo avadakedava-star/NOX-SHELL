@@ -1,0 +1,179 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d2d;
+  --border-color: #3c3c3c;
+  --text-primary: #e5e7eb;
+  --text-secondary: #9ca3af;
+}
+
+html {
+  font-size: 14px;
+}
+
+html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  font-family: system-ui, -apple-system, 'SF Pro Text', sans-serif;
+  overflow: hidden;
+}
+
+#root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+/* 隐藏滚动条（no-scrollbar） */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* 动画 */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+/* 选中文本 */
+::selection {
+  background: rgba(79, 138, 245, 0.35);
+}
+
+/* 打字机光标闪烁 */
+@keyframes blink-caret {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.typing-caret {
+  animation: blink-caret 1s steps(1) infinite;
+}
+
+/* 消息淡入动画 */
+@keyframes msg-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.msg-enter {
+  animation: msg-fade-in 0.25s ease-out;
+}
+
+/* 思考面板展开/收载 */
+@keyframes panel-slide {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 1000px; }
+}
+.panel-slide {
+  animation: panel-slide 0.3s ease-out;
+  overflow: hidden;
+}
+
+/* 三点加载动画 */
+@keyframes loading-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.loading-dot {
+  animation: loading-dot 1.4s ease-in-out infinite;
+}
+.loading-dot:nth-child(2) { animation-delay: 0.16s; }
+.loading-dot:nth-child(3) { animation-delay: 0.32s; }
+
+/* 代码块按钮 hover */
+.code-copy-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.code-block-wrapper:hover .code-copy-btn {
+  opacity: 1;
+}
+
+/* AI 思考中顶部扫描进度条 */
+@keyframes ai-progress-scan {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+.ai-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  z-index: 20;
+}
+.ai-progress-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  animation: ai-progress-scan 1.5s ease-in-out infinite;
+}
+
+/* 阶段标签脉冲 */
+@keyframes stage-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50% { box-shadow: 0 0 0 4px transparent; opacity: 0.7; }
+}
+.stage-active {
+  animation: stage-pulse 2s ease-in-out infinite;
+}
+
+/* 代码块主题变量：默认深色，浅色主题下覆盖 */
+:root {
+  --code-bg: #0d1117;
+  --code-text: #c9d1d9;
+  --code-border: #30363d;
+}
+
+/* 浅色主题代码块 */
+.theme-light {
+  --code-bg: #f6f8fa;
+  --code-text: #1f2328;
+  --code-border: #d0d7de;
+}
