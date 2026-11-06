@@ -10,7 +10,7 @@
 
 黑名单是常见危险写法的预检，不是 Shell 沙箱。开放任意脚本、外部程序和其它工具后，无法保证识别动态拼接、编码脚本、下载程序或工具内部的所有删除行为。远端操作系统的权限仍是最终边界。
 
-源码：server/walissh-server-domain/src/main/java/cn/bugstack/ai/domain/ssh/service/policy/CommandPolicyService.java
+源码：server/nox-shell-server-domain/src/main/java/cn/bugstack/ai/domain/ssh/service/policy/CommandPolicyService.java
 启动包：ai-agent-blacklist-release.jar；start-local.ps1 会自动选择最新版本。
 
 ## 普通服务器状态查询

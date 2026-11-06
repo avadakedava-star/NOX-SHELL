@@ -39,9 +39,9 @@ build/
 /.idea/
 /.mvn/
 /data/
-/walissh-server-app/data/
-/walissh-server-app/.local-config
-/docs/draw.io/.$walissh-table-design.drawio.bkp
+/nox-shell-server-app/data/
+/nox-shell-server-app/.local-config
+/docs/draw.io/.$nox-shell-table-design.drawio.bkp
 /.walicode/memory/core_memory.json
 /.walicode/output.json
 

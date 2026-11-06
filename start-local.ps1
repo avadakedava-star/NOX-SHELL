@@ -5,11 +5,11 @@ $taskRoot = $PSScriptRoot
 $taskJava = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { (Get-Command java.exe -ErrorAction Stop).Source }
 if ([string]::IsNullOrWhiteSpace($ServerJarName)) {
     $taskCandidates = @('ai-agent-scaffold-lite-app.jar', 'ai-agent-tool-audit.jar', 'ai-agent-execution-policy.jar', 'ai-agent-execution-policy-relaxed.jar', 'ai-agent-execution-policy-systemctl.jar', 'ai-agent-failure-limits.jar', 'ai-agent-command-approval.jar', 'ai-agent-approval-release.jar', 'ai-agent-blacklist-release.jar', 'ai-agent-status-queue-release.jar', 'ai-agent-run-finish-release.jar', 'ai-agent-human-summary-release.jar', 'ai-agent-long-task-release.jar') |
-        ForEach-Object { Get-Item -LiteralPath (Join-Path $taskRoot "server\walissh-server-app\target\$_") -ErrorAction SilentlyContinue }
+        ForEach-Object { Get-Item -LiteralPath (Join-Path $taskRoot "server\nox-shell-server-app\target\$_") -ErrorAction SilentlyContinue }
     $ServerJarName = ($taskCandidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name
 }
 if ([string]::IsNullOrWhiteSpace($ServerJarName)) { throw '请先按联调说明打包后端。' }
-$taskJar = Join-Path $taskRoot "server\walissh-server-app\target\$ServerJarName"
+$taskJar = Join-Path $taskRoot "server\nox-shell-server-app\target\$ServerJarName"
 if (!(Test-Path -LiteralPath $taskJava)) { throw "请修改脚本中的 JDK 路径：$taskJava" }
 if (!(Test-Path -LiteralPath $taskJar)) { throw '请先按联调说明打包后端。' }
 if (!(Test-Path -LiteralPath (Join-Path $taskRoot 'client\node_modules\vite\bin\vite.js'))) { throw '请先在 client 目录运行 npm ci。' }

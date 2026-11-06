@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?><project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>cn.bugstack.ai</groupId>
-  <artifactId>walissh-server</artifactId>
+  <artifactId>nox-shell-server</artifactId>
   <version>1.0</version>
   <packaging>pom</packaging>
   <repositories>
@@ -187,32 +187,32 @@
       <!-- 工程模块 -->
       <dependency>
         <groupId>cn.bugstack.ai</groupId>
-        <artifactId>walissh-server-api</artifactId>
+        <artifactId>nox-shell-server-api</artifactId>
         <version>1.0</version>
       </dependency>
       <dependency>
         <groupId>cn.bugstack.ai</groupId>
-        <artifactId>walissh-server-domain</artifactId>
+        <artifactId>nox-shell-server-domain</artifactId>
         <version>1.0</version>
       </dependency>
       <dependency>
         <groupId>cn.bugstack.ai</groupId>
-        <artifactId>walissh-server-infrastructure</artifactId>
+        <artifactId>nox-shell-server-infrastructure</artifactId>
         <version>1.0</version>
       </dependency>
       <dependency>
         <groupId>cn.bugstack.ai</groupId>
-        <artifactId>walissh-server-types</artifactId>
+        <artifactId>nox-shell-server-types</artifactId>
         <version>1.0</version>
       </dependency>
       <dependency>
         <groupId>cn.bugstack.ai</groupId>
-        <artifactId>walissh-server-trigger</artifactId>
+        <artifactId>nox-shell-server-trigger</artifactId>
         <version>1.0</version>
       </dependency>
       <dependency>
         <groupId>cn.bugstack.ai</groupId>
-        <artifactId>walissh-server-case</artifactId>
+        <artifactId>nox-shell-server-case</artifactId>
         <version>1.0</version>
       </dependency>
     </dependencies>
@@ -287,12 +287,12 @@
     </profile>
   </profiles>
   <modules>
-    <module>walissh-server-api</module>
-    <module>walissh-server-app</module>
-    <module>walissh-server-domain</module>
-    <module>walissh-server-trigger</module>
-    <module>walissh-server-infrastructure</module>
-    <module>walissh-server-types</module>
-    <module>walissh-server-case</module>
+    <module>nox-shell-server-api</module>
+    <module>nox-shell-server-app</module>
+    <module>nox-shell-server-domain</module>
+    <module>nox-shell-server-trigger</module>
+    <module>nox-shell-server-infrastructure</module>
+    <module>nox-shell-server-types</module>
+    <module>nox-shell-server-case</module>
   </modules>
 </project>
