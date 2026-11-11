@@ -32,9 +32,31 @@ public class AIAgentReActServiceCase implements IAIAgentReActServiceCase {
     private RootNode rootNode;
 
     @Override
+    public io.reactivex.rxjava3.core.Flowable<com.google.adk.events.Event> executeEvents(
+            ChatRequestDTO request,
+            cn.bugstack.ai.domain.agent.service.audit.ToolExecutionAudit.Subscription subscription) {
+        return io.reactivex.rxjava3.core.Flowable.create(sink -> {
+            var context = DefaultReActFactory.DynamicContext.builder()
+                    .eventSink(sink).auditSubscription(subscription).build();
+            try {
+                subscription.guard().checkActive();
+                rootNode.apply(request, context);
+                subscription.guard().checkActive();
+                if (context.getErrorMessage() != null) {
+                    sink.onError(new IllegalStateException(context.getErrorMessage()));
+                } else if (!sink.isCancelled()) {
+                    sink.onComplete();
+                }
+            } catch (Exception error) {
+                sink.tryOnError(error);
+            }
+        }, io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+    }
+
+    @Override
     public ResponseBodyEmitter chatStream(ChatRequestDTO requestDTO) {
-        // 1. 创建 SSE 发射器（3 分钟超时）
-        ResponseBodyEmitter emitter = new ResponseBodyEmitter(3 * 60 * 1000L);
+        // SSE 连接不作为业务任务截止时间，执行侧按证据与资源预算检查。
+        ResponseBodyEmitter emitter = new ResponseBodyEmitter(0L);
 
         try {
             log.info("ReAct 流式对话开始 - agentId:{} userId:{} sessionId:{} terminalSessionId:{}",

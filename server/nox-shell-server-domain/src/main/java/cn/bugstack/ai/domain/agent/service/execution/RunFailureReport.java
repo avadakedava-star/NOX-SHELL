@@ -15,6 +15,7 @@ public record RunFailureReport(String reason, String cause, List<String> complet
         long timeoutMs=30000;
         boolean containerCreated=false;
         for(var record: records) {
+            if(record.toolName().equals("reportProgress"))continue;
             // 派发记录含整段任务和子工具结果，不把它重复当作命令证据。
             if(record.toolName().toLowerCase(Locale.ROOT).contains("dispatch") || record.toolName().startsWith("ssh") && record.toolName().endsWith("Agent")) continue;
             String command=record.arguments(), detail=record.error()==null ? "" : record.error();
@@ -57,6 +58,8 @@ public record RunFailureReport(String reason, String cause, List<String> complet
         else if(failure.equals("COMMAND_NOT_FOUND")) problem="最后一步需要的程序没有找到，可能尚未安装或路径不正确。";
         else problem=switch(reason){
             case "REQUEST_TIMEOUT" -> "这轮任务超过了等待时限，已停止继续执行。";
+            case "PROGRESS_STALLED", "PROGRESS_REVIEW_REQUIRED" -> "连续检查未取得新的有效信息，已暂停后续操作；这不代表远端任务已经失败或停止。";
+            case "RESOURCE_BUDGET" -> "达到执行资源的最终保护上限，已保存已有结果；后台任务需要单独查询状态。";
             case "RESULT_UNKNOWN" -> "命令可能已经执行，但没有取得完整结果，暂时无法确认最终状态。";
             case "CONSECUTIVE_FAILURE_LIMIT" -> "连续几次操作都失败了，已停止继续尝试。";
             case "POLICY_BLOCKED", "POLICY_REWRITE_LIMIT" -> "同一操作多次被安全规则拒绝，已停止继续尝试。";

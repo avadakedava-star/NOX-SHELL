@@ -1,11 +1,13 @@
 import Editor from '@monaco-editor/react'
+import { useThemeStore } from '../stores/themeStore'
 
 export function CodeEditor() {
+  const { colors, currentTheme } = useThemeStore()
   return (
-    <div className="flex-1 flex flex-col bg-[#1e1e1e]">
+    <div className="flex-1 flex flex-col" style={{ backgroundColor: colors.bgPrimary }}>
       {/* 编辑器标题栏 */}
-      <div className="h-9 bg-[#252526] border-b border-[#3c3c3c] flex items-center px-2">
-        <div className="px-3 py-1 text-sm text-white bg-[#1e1e1e] border-t-2 border-[#007acc] rounded-t">
+      <div className="h-9 border-b flex items-center px-2" style={{ backgroundColor: colors.bgSecondary, borderColor: colors.border }}>
+        <div className="px-3 py-1 text-sm border-t-2 rounded-t" style={{ color: colors.text, backgroundColor: colors.bgPrimary, borderColor: colors.accent }}>
           editor.js
         </div>
       </div>
@@ -15,12 +17,12 @@ export function CodeEditor() {
         <Editor
           height="100%"
           defaultLanguage="javascript"
-          theme="vs-dark"
-          defaultValue={`// WaLiSSH Code Editor
+          theme={currentTheme === 'light' ? 'light' : 'vs-dark'}
+          defaultValue={`// NOX-SHELL Code Editor
 // 使用 AI Agent 协助编写代码
 
 function hello() {
-  console.log("Hello from WaLiSSH!");
+  console.log("Hello from NOX-SHELL!");
 }
 `}
           options={{

@@ -24,6 +24,11 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
  */
 public interface IAIAgentReActServiceCase {
 
+    /** 执行增强节点链，原始 ADK 事件交给统一 HTTP 生命周期处理。 */
+    io.reactivex.rxjava3.core.Flowable<com.google.adk.events.Event> executeEvents(
+            ChatRequestDTO request,
+            cn.bugstack.ai.domain.agent.service.audit.ToolExecutionAudit.Subscription subscription);
+
     /**
      * 流式对话（ReAct 模式）
      *

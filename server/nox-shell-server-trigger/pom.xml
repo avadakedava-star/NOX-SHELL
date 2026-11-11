@@ -30,6 +30,10 @@
         <!-- 系统模块 -->
         <dependency>
             <groupId>cn.bugstack.ai</groupId>
+            <artifactId>nox-shell-server-case</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cn.bugstack.ai</groupId>
             <artifactId>nox-shell-server-api</artifactId>
         </dependency>
         <dependency>

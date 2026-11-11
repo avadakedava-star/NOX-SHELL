@@ -25,7 +25,11 @@ public final class AuditedToolMap extends LinkedHashMap<String, BaseTool> {
     public ToolExecutionAudit audit() { return audit; }
 
     public static void bind(CallbackContext callback, LlmRequest.Builder request, ToolExecutionAudit audit) {
-        request.tools(new AuditedToolMap(request.build().tools(), audit.context(callback), audit));
+        var context=audit.context(callback);
+        var tools=new LinkedHashMap<>(request.build().tools());
+        tools.put("reportProgress",new cn.bugstack.ai.domain.agent.service.execution.ProgressReviewTool(context.guard(),
+                context.parentExecutionId()==null?"root":callback.sessionId()));
+        request.tools(new AuditedToolMap(tools, context, audit));
     }
 
     public static boolean isAudited(ToolContext context) {
@@ -52,6 +56,7 @@ public final class AuditedToolMap extends LinkedHashMap<String, BaseTool> {
                 return Single.defer(() -> delegate.runAsync(arguments, toolContext))
                         .map(result -> audit.normalizeChildResult(record, result))
                         .doOnSuccess(result -> { if (finished.compareAndSet(false, true)) audit.returned(record, result); })
+                        .map(result -> audit.withProgress(record,result))
                         .doOnError(error -> { if (finished.compareAndSet(false, true)) audit.failed(record, error); })
                         .doOnDispose(() -> { if (finished.compareAndSet(false, true)) audit.cancelled(record); });
             });

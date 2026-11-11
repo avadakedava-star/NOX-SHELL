@@ -126,6 +126,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
      * 发送文本事件
      */
     protected void sendTextEvent(ResponseBodyEmitter emitter, String content, String fullText) {
+        if (emitter == null) return;
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent("text");
@@ -142,6 +143,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
      * 发送工具调用事件
      */
     protected void sendToolCallEvent(ResponseBodyEmitter emitter, String toolCallId, String toolName, String status) {
+        if (emitter == null) return;
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent("tool_call");
@@ -159,6 +161,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
      * 发送工具结果事件
      */
     protected void sendToolResultEvent(ResponseBodyEmitter emitter, String toolCallId, String content, String status) {
+        if (emitter == null) return;
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent("tool_result");
@@ -176,6 +179,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
      * 发送步数结束事件
      */
     protected void sendRoundEndEvent(ResponseBodyEmitter emitter, int currentStep, int maxSteps, boolean shouldContinue, int totalToolCalls) {
+        if (emitter == null) return;
         try {
             ReActEventDTO.StepInfo stepInfo = new ReActEventDTO.StepInfo();
             stepInfo.setCurrentStep(currentStep);
@@ -197,6 +201,7 @@ public abstract class AbstractAIAgentReActSupport extends AbstractMultiThreadStr
      * 发送完成事件
      */
     protected void sendDoneEvent(ResponseBodyEmitter emitter, ReActResultDTO result) {
+        if (emitter == null) return;
         try {
             ReActEventDTO event = new ReActEventDTO();
             event.setEvent("done");

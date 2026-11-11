@@ -7,6 +7,10 @@ public final class RequestExecutionGuard {
     public static final String CONTEXT_KEY = "nox-shell.execution.guard";
     private final ExecutionPolicyProperties policy;
     private final long deadline;
+    private final long observationMillis;
+    private final java.util.function.LongSupplier clock;
+    private final ExecutionProgress progress;
+    private boolean reviewRequired;
     private int requests, calls, consecutive, policyRejections;
     private String stopReason, stopMessage;
     private final Map<String, Integer> failures = new HashMap<>(), policyBlocks = new HashMap<>();
@@ -16,12 +20,25 @@ public final class RequestExecutionGuard {
     private final Map<String, String> outcomes = new HashMap<>();
     private final Map<String, String> executionSessions = new HashMap<>(), sessionOutcomes = new HashMap<>();
 
-    public RequestExecutionGuard(ExecutionPolicyProperties policy, long deadline) { this.policy = policy; this.deadline = deadline; }
+    public RequestExecutionGuard(ExecutionPolicyProperties policy, long observationAt) { this(policy,observationAt,System::currentTimeMillis); }
+    public RequestExecutionGuard(ExecutionPolicyProperties policy,long observationAt,java.util.function.LongSupplier clock) {
+        this.policy=policy;this.clock=clock;this.observationMillis=Math.max(1,observationAt-clock.getAsLong());
+        this.deadline=clock.getAsLong()+policy.maxRequestSeconds()*1000L;this.progress=new ExecutionProgress(clock);
+    }
+    public ExecutionProgress progress(){return progress;}
+    public synchronized String progressState(){return reviewRequired || clock.getAsLong()-progress.lastEvidenceAt()>=observationMillis ? "CHECKING" : "RUNNING";}
+    public synchronized void observe(String id,String tool,String status,String fingerprint) {
+        if(children.containsKey(id))return;
+        if(progress.observe(id,tool,status,fingerprint))reviewRequired=false;
+        if(progress.unchanged()>=policy.repeatedEvidenceLimit())halt("PROGRESS_STALLED","重复操作未取得新信息，已暂停后续操作；请核查当前状态或调整方法");
+    }
     public ExecutionPolicyProperties policy() { return policy; }
     public long deadline() { return deadline; }
-    public synchronized long remainingMillis() { return Math.max(1, deadline - System.currentTimeMillis()); }
+    public synchronized long remainingMillis() { return Math.max(1, deadline - clock.getAsLong()); }
     public synchronized void checkActive() {
-        if (stopReason == null && System.currentTimeMillis() >= deadline) halt("REQUEST_TIMEOUT", "请求超过 " + policy.requestTimeoutSeconds() + " 秒，停止后续操作；已发出的命令需核查结果");
+        if (stopReason == null && clock.getAsLong() >= deadline) halt("RESOURCE_BUDGET", "达到最终执行资源上限，已保存执行记录；远端后台任务不会因此被取消");
+        if (stopReason == null && !hasInFlight() && clock.getAsLong()-progress.lastEvidenceAt()>=observationMillis*2)
+            halt("PROGRESS_REVIEW_REQUIRED","连续两个观察窗口没有取得新证据，已暂停后续操作；这不代表远端任务失败");
         if (stopReason != null) throw new ExecutionHaltedException(stopReason, stopMessage);
     }
     /** 次数只用于审计统计；失败、并发重复和请求时限仍在真实执行入口检查。 */
@@ -59,7 +76,7 @@ public final class RequestExecutionGuard {
                 consecutive++; failures.merge(signature, 1, Integer::sum);
                 if (Set.of("PERMISSION_DENIED", "COMMAND_NOT_FOUND", "INVALID_ARGUMENT", "NO_TERMINAL").contains(failureType == null ? "" : failureType)) permanentBlocks.add(signature);
                 if ("UNKNOWN".equals(status)) halt("RESULT_UNKNOWN", "操作结果未知，停止自动执行，请核查服务器状态后再继续");
-                else if (consecutive >= policy.consecutiveFailures()) halt("CONSECUTIVE_FAILURE_LIMIT", "连续工具失败达到 " + policy.consecutiveFailures() + " 次，停止自动操作");
+                else if (consecutive >= policy.consecutiveFailures()) reviewRequired=true;
             }
         }
         outcomes.put(executionId, status);

@@ -151,6 +151,11 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             }
         }
 
+        // ADK 工具会在线程池中读取 Session state，必须在每轮 Runner 调用前覆盖重连前的旧编号。
+        cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.bindSession(
+                runner.sessionService(), aiAgentRegisterVO.getAppName(), dynamicContext.getUserId(),
+                dynamicContext.getSessionId(), terminalSessionId);
+
         // 6. 构建动态上下文并注入用户消息
         String enrichedMessage = buildEnrichedMessage(lastUserMessage, dynamicContext);
         log.debug("注入动态上下文后消息长度: {} -> {}", lastUserMessage.length(), enrichedMessage.length());
@@ -188,7 +193,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
             dynamicContext.setAuditSubscription(toolExecutionAudit.subscribe(dynamicContext.getUserId(),
                     dynamicContext.getSessionId(), notification -> recordToolExecution(dynamicContext, notification.record())));
         }
-        try {
+        try (var observer = dynamicContext.getEventSink() == null ? null
+                : dynamicContext.getAuditSubscription().observe(notification -> recordToolExecution(dynamicContext, notification.record()))) {
             var guard = dynamicContext.getAuditSubscription().guard();
             if (guard != null) guard.checkActive();
             // ADK Runner 会自动执行工具（SpringAI ChatModel.call() 内部执行）
@@ -197,12 +203,27 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
                     dynamicContext.getUserId(),
                     dynamicContext.getSessionId(),
                     userContent,
-                    cn.bugstack.ai.domain.agent.service.execution.ExecutionRunConfig.builder().build()
+                    cn.bugstack.ai.domain.agent.service.execution.ExecutionRunConfig.builder()
+                            .autoCreateSession(true)
+                            .build()
             ).blockingIterable().iterator();
+            if (dynamicContext.getEventSink() != null && events instanceof io.reactivex.rxjava3.disposables.Disposable disposable) {
+                dynamicContext.getEventSink().setCancellable(disposable::dispose);
+            }
 
             int eventCount = 0;
             while (events.hasNext()) {
                 Event event = events.next();
+                if (dynamicContext.getEventSink() != null) {
+                    if (dynamicContext.getEventSink().isCancelled()) {
+                        guard.halt("CLIENT_DISCONNECTED", "客户端已断开连接");
+                        guard.checkActive();
+                    }
+                    dynamicContext.getEventSink().onNext(event);
+                    if (event.errorCode().isPresent()) {
+                        throw new IllegalStateException(event.errorMessage().orElse(event.errorCode().get().toString()));
+                    }
+                }
                 eventCount++;
 
                 event.stringifyContent();

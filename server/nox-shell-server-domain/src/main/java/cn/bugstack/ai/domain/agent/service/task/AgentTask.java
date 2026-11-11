@@ -4,6 +4,8 @@ import java.util.*;
 public class AgentTask {
     public String id,userId,sessionId,requestId,connectionId,target,title,kind,status,stage,message,resourceId,command;
     public long createdAt,deadline,updatedAt,cancelAt;
+    public long lastEvidenceAt,lastActivityAt,observationStartedAt;
+    public String progressEvidence="";
     public int commandTimeoutSeconds;
     public boolean cancelRequested;
     public ContainerSpec container;
@@ -12,6 +14,7 @@ public class AgentTask {
         var value=new LinkedHashMap<String,Object>();
         value.put("target",target);value.put("id",id);value.put("title",title);value.put("kind",kind);value.put("status",status);value.put("stage",stage);value.put("message",message);
         value.put("createdAt",createdAt);value.put("updatedAt",updatedAt);value.put("deadline",deadline);value.put("resourceId",resourceId);value.put("cancelRequested",cancelRequested);
+        value.put("lastEvidenceAt",lastEvidenceAt);value.put("lastActivityAt",lastActivityAt);value.put("progressEvidence",progressEvidence);
         if(container!=null){value.put("containerName",container.name());value.put("image",container.image());value.put("port",container.bindAddress()+":"+container.hostPort()+":"+container.containerPort());}
         return value;
     }

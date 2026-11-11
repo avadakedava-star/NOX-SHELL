@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
 
 @Component
 /**
- * NOX-SHELL 自定义 ADK Session 服务。
+ * WaLiSSH 自定义 ADK Session 服务。
  *
  * <p>这个类并不是去“1:1 复刻” ADK 原生/默认 Session 的完整存储语义，
  * 而是围绕当前 ReAct + SSH 场景，做了一层<strong>面向运行期的轻量化会话治理</strong>。

@@ -11,12 +11,12 @@ ai:
           module:
             # 这里通过 WaLiAPI 做的代理，检查上下文日志；下载：https://github.com/fuzhengwei/WaLiAPI/releases
             ai-api:
-              base-url: https://api.deepseek.com
+              base-url: ${MODEL_BASE_URL:https://api.deepseek.com}
               api-key: ${DEEPSEEK_API_KEY:}
               completions-path: /chat/completions
               embeddings-path: v1/embeddings
             chat-model:
-              model: deepseek-flash
+              model: ${MODEL_NAME}
 #              model: agnes-3.0-flash
               # 当前 WaLiAPI 的 glm-5.3-flash 路由不支持 reasoning_effort，保持未配置以确保工具调用请求可用。
               # MCP 工具配置
@@ -45,16 +45,16 @@ ai:
                   只有用户明确要求多个独立专项深查，或任务确实需要多个角色协同时，才调用 planAndDispatchSubAgents。
                   该工具会先规划任务，再并行或串行执行子智能体，并返回任务结果。
                   普通“查询服务器状态 / 看看服务器是否正常 / 健康检查”属于一个简单诊断任务，只派发一次 sshDiagnosisAgent，不拆成 CPU、内存、磁盘、网络、日志等多个子 Agent。
-                  
+
                   ## ⚠️ 最高优先级规则（必须严格遵守）
-                  
+
                   **你拥有 sshDiagnosisAgent 和 sshChangeAgent 两个子智能体工具，必须优先调用它们完成任务。**
-                  
+
                   禁止行为（会导致严重错误）：
                   - ❌ 只用文字描述「我将执行 xxx 命令」但不实际调用工具
                   - ❌ 告诉用户「你可以运行 xxx」让用户自己执行
                   - ❌ 在文字中写 `` `xxx` `` 格式的命令但不调用 executeCommand
-                  
+
                   正确行为：
                   - ✅ 诊断类任务调用 sshDiagnosisAgent，请求参数为 {"request":"完整的诊断任务"}
                   - ✅ 变更类任务调用 sshChangeAgent，请求参数为 {"request":"完整的变更任务"}
@@ -62,7 +62,7 @@ ai:
                   - ✅ 你没有 executeCommand 工具；所有命令都必须由子智能体执行
                   - ✅ 调用工具后再根据结果向用户报告
                   - ✅ 一句话说明意图即可，不要长篇描述，直接动手执行
-                  
+
                   ## 长任务
                   拉镜像、安装、构建和部署可能超过短命令时限，应派发 sshChangeAgent，要求使用 submitLongCommand 或 deployContainer。容器部署必须使用 deployContainer，由程序核查已有资源、准备镜像、创建容器和等待启动，不手工用 executeCommand 串行执行整套 docker pull/run/sleep。
                   子 Agent 返回 TASK_SUBMITTED 表示任务已保存并在后台运行，不表示部署成功。收到后向用户说明任务编号和当前阶段，然后结束本轮回答，页面会自动查询进度。不要持续调用 getTask 轮询。用户明确问进度时才调用 getTask；明确取消任务时才调用 cancelTask。停止聊天输出不取消已提交的后台任务。
@@ -77,31 +77,31 @@ ai:
                      - 成功：向用户报告结果摘要
                      - 失败：分析错误原因，尝试修复或提供解决方案
                   4. **多轮交互**：持续对话直到完成用户目标
-                  
+
                   ## 工作流程示例
-                  
+
                   用户说："帮我安装 docker"
-                  
+
                   1. 先派发诊断子智能体：
                      ```
                      sshDiagnosisAgent({ request: "检测服务器系统环境，输出操作系统版本、CPU、内存信息" })
                      ```
                      根据输出判断是 Ubuntu/CentOS/macOS 等
-                  
+
                   2. 生成适配的安装命令：
                      - Ubuntu/Debian: `sudo apt update && sudo apt install -y docker.io`
                      - CentOS/RHEL: `sudo yum install -y docker`
                      - macOS: `brew install docker`
-                  
+
                   3. 派发变更子智能体执行安装，并在完成后观察输出
-                  
+
                   4. 验证安装：
                      ```
                      sshChangeAgent({ request: "安装并启动 Docker，完成后验证版本和服务状态" })
                      ```
-                  
+
                   5. 向用户报告结果
-                  
+
                   ## 后端执行边界
                   除删除、清理数据、磁盘破坏等黑名单操作外，所有命令和工具直接执行，不需要审批或确认卡。允许安装软件、启停/重启服务、修改配置、账号权限变更、脚本、管道、重定向、多行命令及自定义程序。
                   需要管理员权限时可使用 sudo -n，不等待密码；服务器实际账号权限仍由操作系统决定。配置可使用 executeCommand，或先读取原文，再用 updateConfigFile(path,expectedContent,content) 直接核对、备份和替换已有文件。
@@ -112,60 +112,60 @@ ai:
                   AI 命令使用独立 exec 通道，不继承手动终端的 cd、别名和临时变量，请使用绝对路径。
 
                   ## 错误处理策略
-                  
+
                   当命令执行失败时：
                   1. **分析错误类型**：
                      - 权限不足 → 分析原因，可使用 sudo -n 执行任务所需操作；若仍失败，报告实际权限限制
                      - 命令不存在 → 核对程序和路径，按任务需要安装软件
                      - 网络问题 → 建议检查网络/镜像源
                      - 依赖缺失 → 按任务需要安装依赖并验证
-                  
+
                   2. **提供解决方案**：
                      - 给出修复命令
                      - 或提供替代方案
-                  
+
                   3. **继续执行**：
                      - 任务所需的非黑名单操作直接执行
                      - 仅在缺少必要信息或用户意图不明确时询问
-                  
+
                   ## 安全规则
-                  
+
                   ⚠️ **必须遵守**：
                   1. 危险命令（rm -rf /、dd、mkfs 等）会被系统拦截，不要尝试绕过
                   2. 涉及系统关键文件（/etc/passwd、/boot 等）的操作需警告用户
                   3. 不执行用户未明确授权的破坏性操作
                   4. 敏感信息（密码、密钥）不要明文显示
-                  
+
                   ## 输出格式
-                  
+
                   - **执行时**：一句话说明意图，立即派发对应子智能体
                   - **执行后**：展示结果摘要（关键信息，不要全量输出）
                   - **出错时**：清晰说明错误原因 + 解决方案
-                  
+
                   ## 常见任务示例
-                  
+
                   ### 安装软件
                   ```
                   用户: 安装 nginx
                   → 派发 sshChangeAgent({ request: "安装并验证 nginx" })
                   ```
-                  
+
                   ### 查看状态
                   ```
                   用户: 查看 docker 运行状态
                   → 派发 sshDiagnosisAgent({ request: "查看 Docker 服务状态和最近错误日志" })
                   → 解析输出，报告状态
                   ```
-                  
+
                   ### 故障排查
                   ```
                   用户: nginx 启动失败，帮我排查
                   → 派发 sshDiagnosisAgent({ request: "排查 Nginx 启动失败，查看服务状态、配置校验、监听端口和最近日志" })
                   → 分析原因，给出修复建议
                   ```
-                  
+
                   ## 注意事项
-                  
+
                   1. 每次只执行一个命令，等待结果后再决定下一步
                   2. 命令输出可能很长，提取关键信息展示
                   3. 用户可能不熟悉 Linux，用简洁易懂的语言解释

@@ -1,174 +1,152 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { Header } from '../components/Header'
-import { ActivityBar } from '../components/ActivityBar'
+import { ActivityBar, type TabId } from '../components/ActivityBar'
 import { LeftSidebar } from '../components/LeftSidebar'
 import { RightSidebar } from '../components/RightSidebar'
 import { HistorySidebar } from '../components/HistorySidebar'
 import { TerminalPanel } from '../components/TerminalPanel'
 import { Settings } from '../components/Settings'
 import { SSHConnectionModal } from '../components/SSHConnectionModal'
+import { PanelDivider } from '../components/PanelDivider'
 import { useThemeStore } from '../stores/themeStore'
-
-type TabId = 'servers' | 'files' | 'sftp' | 'extensions'
+import { StatusBar } from '../components/StatusBar'
+import {
+  useLayoutStore,
+  SIDEBAR_MIN,
+  SIDEBAR_MAX,
+  SIDEBAR_DEFAULT,
+  CHAT_MIN,
+  CHAT_MAX,
+  CHAT_DEFAULT,
+} from '../stores/layoutStore'
 
 export function MainView() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sshModalOpen, setSshModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>('servers')
-  const [sidebarVisible, setSidebarVisible] = useState(true)
-  const [sidebarWidth, setSidebarWidth] = useState(260)
-  const [chatVisible, setChatVisible] = useState(true)
-  const [chatWidth, setChatWidth] = useState(560)
   const [historyVisible, setHistoryVisible] = useState(false)
-  const [historyWidth, setHistoryWidth] = useState(280)
   const [terminalVisible, setTerminalVisible] = useState(true)
-  const [isResizingSidebar, setIsResizingSidebar] = useState(false)
-  const [isResizingChat, setIsResizingChat] = useState(false)
-  const [isResizingHistory, setIsResizingHistory] = useState(false)
 
   const { colors } = useThemeStore()
+  const {
+    sidebarWidth, chatWidth, sidebarVisible, chatVisible,
+    setSidebarWidth, setChatWidth, setSidebarVisible, setChatVisible,
+  } = useLayoutStore()
 
-  // Sidebar 拖拽
-  const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizingSidebar(true)
-    const startX = e.clientX
-    const startWidth = sidebarWidth
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(180, Math.min(500, startWidth + (moveEvent.clientX - startX)))
-      setSidebarWidth(newWidth)
+  // 窄屏：单栏模式，避免三栏被压瘪
+  const [compact, setCompact] = useState(() => window.innerWidth < 900)
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 899px)')
+    const update = () => {
+      setCompact(media.matches)
+      if (media.matches) setHistoryVisible(false)
     }
-
-    const onMouseUp = () => {
-      setIsResizingSidebar(false)
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-      document.body.style.cursor = ''
-    }
-
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    document.body.style.cursor = 'col-resize'
-  }, [sidebarWidth])
-
-  // Chat 拖拽
-  const handleChatResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizingChat(true)
-    const startX = e.clientX
-    const startWidth = chatWidth
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(300, Math.min(700, startWidth - (moveEvent.clientX - startX)))
-      setChatWidth(newWidth)
-    }
-
-    const onMouseUp = () => {
-      setIsResizingChat(false)
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-      document.body.style.cursor = ''
-    }
-
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    document.body.style.cursor = 'col-resize'
-  }, [chatWidth])
-
-  // History 拖拽
-  const handleHistoryResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizingHistory(true)
-    const startX = e.clientX
-    const startWidth = historyWidth
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const newWidth = Math.max(200, Math.min(450, startWidth - (moveEvent.clientX - startX)))
-      setHistoryWidth(newWidth)
-    }
-
-    const onMouseUp = () => {
-      setIsResizingHistory(false)
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-      document.body.style.cursor = ''
-    }
-
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    document.body.style.cursor = 'col-resize'
-  }, [historyWidth])
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
 
   useEffect(() => {
     document.body.style.backgroundColor = colors.bgPrimary
     document.body.style.color = colors.text
   }, [colors])
 
+  const showAssistant = () => {
+    setChatVisible(true)
+    if (compact) setSidebarVisible(false)
+  }
+
+  const showServers = () => {
+    setSidebarVisible(true)
+    if (compact) setChatVisible(false)
+  }
+
   return (
-    <div className="w-screen h-screen flex flex-col overflow-hidden" style={{ backgroundColor: colors.bgPrimary }}>
-      {/* ===== 顶部标题栏 ===== */}
+    <div className="nox-app w-screen h-screen flex flex-col overflow-hidden" style={{ backgroundColor: colors.bgPrimary }}>
       <Header
-        onToggleSidebar={() => setSidebarVisible(!sidebarVisible)}
+        onToggleSidebar={() => {
+          if (compact) {
+            const next = !sidebarVisible
+            setSidebarVisible(next)
+            if (next) setChatVisible(false)
+            return
+          }
+          setSidebarVisible(!sidebarVisible)
+        }}
         sidebarVisible={sidebarVisible}
-        onToggleTerminal={() => setTerminalVisible(!terminalVisible)}
-        terminalVisible={terminalVisible}
-        onToggleChat={() => setChatVisible(!chatVisible)}
+        onToggleTerminal={() => {
+          if (compact) {
+            setTerminalVisible(true)
+            setSidebarVisible(false)
+            setChatVisible(false)
+            setHistoryVisible(false)
+            return
+          }
+          setTerminalVisible(!terminalVisible)
+        }}
+        terminalVisible={terminalVisible && (!compact || (!sidebarVisible && !chatVisible))}
+        onToggleChat={() => {
+          if (compact) {
+            const next = !chatVisible
+            setChatVisible(next)
+            if (next) { setSidebarVisible(false); setHistoryVisible(false) }
+            return
+          }
+          setChatVisible(!chatVisible)
+        }}
         chatVisible={chatVisible}
         onOpenSSHModal={() => setSshModalOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      {/* ===== 主体区域 ===== */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左侧：ActivityBar + Sidebar */}
+      <div className="nox-workspace flex-1 flex overflow-hidden min-h-0">
         {sidebarVisible && (
           <>
             <ActivityBar activeTab={activeTab} onTabChange={setActiveTab} onOpenSettings={() => setSettingsOpen(true)} />
-
-            <div
-              className="flex-shrink-0 transition-none overflow-hidden relative"
-              style={{ width: sidebarWidth }}
-            >
-              <LeftSidebar activeTab={activeTab} />
+            <div className="nox-sidebar-host flex-shrink-0 overflow-hidden relative" style={{ width: compact ? undefined : sidebarWidth }}>
+              <LeftSidebar activeTab={activeTab} onRequestOpenModal={() => setSshModalOpen(true)} />
             </div>
-
-            {/* Sidebar 拖拽条 */}
-            <div
-              className="w-1.5 h-full cursor-col-resize relative z-50 flex-shrink-0"
-              style={{ backgroundColor: isResizingSidebar ? colors.accent : 'transparent' }}
-              onMouseDown={handleSidebarResizeStart}
-            >
-              <div
-                className={`absolute inset-y-0 -left-[3px] -right-[3px] ${isResizingSidebar ? '' : 'hover:bg-blue-500/30'} rounded-full`}
+            {!compact && (
+              <PanelDivider
+                label="调整服务器栏宽度"
+                value={sidebarWidth}
+                min={SIDEBAR_MIN}
+                max={SIDEBAR_MAX}
+                direction={1}
+                onChange={setSidebarWidth}
+                onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
               />
-            </div>
+            )}
           </>
         )}
 
-        {/* 中间：终端 */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        <div className="nox-terminal-host flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           {terminalVisible ? (
-            <TerminalPanel />
+            <TerminalPanel
+              onOpenConnection={() => setSshModalOpen(true)}
+              onOpenAssistant={showAssistant}
+              onOpenServers={showServers}
+            />
           ) : (
             <div className="flex-1 flex items-center justify-center">
-              <p className="text-sm" style={{ color: colors.textDim }}>终端已隐藏 (按 ⌘` 显示)</p>
+              <button className="nox-button-secondary" onClick={() => setTerminalVisible(true)}>终端已隐藏 · 重新打开</button>
             </div>
           )}
         </div>
 
-        {/* 右侧：AI 对话面板 */}
         {chatVisible && (
           <>
-            {/* Chat 拖拽条 */}
-            <div
-              className="w-1.5 h-full cursor-col-resize relative z-50 flex-shrink-0 bg-[#3c3c3c]/40"
-              style={{ backgroundColor: isResizingChat ? colors.accent : undefined }}
-              onMouseDown={handleChatResizeStart}
-            >
-              <div
-                className={`absolute inset-y-0 -left-[3px] -right-[3px] ${isResizingChat ? '' : 'hover:bg-blue-500/30'} rounded-full`}
+            {!compact && (
+              <PanelDivider
+                label="调整 AI 助手宽度"
+                value={chatWidth}
+                min={CHAT_MIN}
+                max={CHAT_MAX}
+                direction={-1}
+                onChange={setChatWidth}
+                onReset={() => setChatWidth(CHAT_DEFAULT)}
               />
-            </div>
+            )}
             <RightSidebar
               width={chatWidth}
               historyVisible={historyVisible}
@@ -177,28 +155,14 @@ export function MainView() {
           </>
         )}
 
-        {/* 最右侧：历史对话侧边栏 */}
         {historyVisible && (
-          <>
-            {/* History 拖拽条 */}
-            <div
-              className="w-1.5 h-full cursor-col-resize relative z-50 flex-shrink-0"
-              style={{ backgroundColor: isResizingHistory ? colors.accent : 'transparent' }}
-              onMouseDown={handleHistoryResizeStart}
-            >
-              <div
-                className={`absolute inset-y-0 -left-[3px] -right-[3px] ${isResizingHistory ? '' : 'hover:bg-blue-500/30'} rounded-full`}
-              />
-            </div>
-            <HistorySidebar width={historyWidth} onClose={() => setHistoryVisible(false)} />
-          </>
+          <HistorySidebar width={280} onClose={() => setHistoryVisible(false)} />
         )}
       </div>
 
-      {/* SSH 连接配置弹窗 */}
-      <SSHConnectionModal open={sshModalOpen} onClose={() => setSshModalOpen(false)} />
+      <StatusBar />
 
-      {/* 设置弹窗 */}
+      <SSHConnectionModal open={sshModalOpen} onClose={() => setSshModalOpen(false)} />
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )

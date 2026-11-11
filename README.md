@@ -8,6 +8,9 @@ SSH 智能运维助手，包含 React / TypeScript 前端与 Java 17 / Spring Bo
 - SSH 命令执行、危险操作黑名单、同一终端排队。
 - 持久化后台长任务、容器部署、就绪检查、任务恢复与取消。
 - 任务进度卡、异常中文说明，以及前端连接状态与后台启动改进。
+- NOX-SHELL 前端改版、可调整面板，以及明确的服务和 SSH 连接提示。
+- 普通/增强模式切换，重连后同步终端上下文，聊天发送入口统一绑定终端。
+- 根据执行证据观察进展，停滞时先核查再暂停；模型进展报告须引用真实执行记录。
 
 ## 目录
 
@@ -24,6 +27,8 @@ SSH 智能运维助手，包含 React / TypeScript 前端与 Java 17 / Spring Bo
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "你自己的模型密钥"
+$env:MODEL_BASE_URL = "你的 OpenAI 兼容模型接口基础地址"
+$env:MODEL_NAME = "该接口支持的模型名称"
 $env:DB_USERNAME = "root"
 $env:DB_PASSWORD = "你自己的数据库密码"
 $env:NOX_SHELL_SECRET_KEY = "你自己生成并妥善保存的随机32位密钥"
@@ -45,15 +50,19 @@ cd ..
 ./start-local.ps1
 ```
 
-前端地址为 `http://127.0.0.1:5173/`，后端端口为 `8091`。`maven-settings.xml` 与启动脚本默认使用本机 `7897` 代理，按实际环境调整。后台前端使用 Windows WMI 独立启动；也可在 `client` 中手动运行 `npm run dev`。
+前端地址为 `http://127.0.0.1:5173/`，后端端口为 `8091`。`maven-settings.xml` 与启动脚本默认使用本机 `7897` 代理，按实际环境调整。后台前端使用 Windows 任务计划托管；也可在 `client` 中手动运行 `npm run dev`。
 
-模型地址和名称位于 `server/nox-shell-server-app/src/main/resources/agent/ssh-agent.yml`。可选手工集成测试需要自行配置模型、SSH 和数据库环境。
+模型地址和名称通过 `MODEL_BASE_URL`、`MODEL_NAME` 配置，配置入口为 `server/nox-shell-server-app/src/main/resources/agent/ssh-agent.yml`。可选手工集成测试需要自行配置模型、SSH 和数据库环境。
 
 ## 公开版本说明
 
 本仓库是 `final-test` 的脱敏源码副本：不包含运行日志、数据库备份或历史记录、真实密钥、SSH 凭据、依赖目录及构建产物。原有固定密钥已改为必须通过环境变量配置。
 
 当前保留本地固定用户模式，完整的生产身份认证与资源授权尚未实现。
+
+## 本次更新与验证
+
+详见 [更新说明](docs/updates/2026-11-11-final-test.md)。前端可运行 `npm run test:terminal-binding`、`npm run test:execution-state` 和 `npm run test:chat-mode`。这些测试使用模拟请求，不会连接模型或服务器。后端手工集成测试仍需要自行配置环境。
 
 ## 来源与致谢
 

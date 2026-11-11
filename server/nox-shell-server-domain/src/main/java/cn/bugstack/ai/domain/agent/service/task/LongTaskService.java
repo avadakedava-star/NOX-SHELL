@@ -22,7 +22,7 @@ public class LongTaskService {
     private final Set<String> active=ConcurrentHashMap.newKeySet();private final String worker=UUID.randomUUID().toString();
     private final ExecutorService workers=Executors.newFixedThreadPool(2,r->{var t=new Thread(r,"long-task");t.setDaemon(true);return t;});
     private final LongSupplier clock;
-    // 同时支持新标识和尚未更名的前端标识，保留旧会话和连接归属。
+    // 当前本地 UI 的聊天标识为 nox-shell-user，连接标识为 default；不改变旧会话和连接归属。
     @org.springframework.beans.factory.annotation.Value("${nox-shell.tasks.local-connection-owner:default}")
     private String localConnectionOwner="default";
     @org.springframework.beans.factory.annotation.Autowired
@@ -41,11 +41,12 @@ public class LongTaskService {
         var task=new AgentTask();task.id=UUID.randomUUID().toString();task.userId=context.userId();task.sessionId=context.sessionId();task.requestId=context.requestId();
         task.connectionId=connection.getConnectionId();task.target=connection.getUsername()+"@"+connection.getHost()+":"+connection.getPort();task.title=title;task.kind=kind;
         task.status="PENDING";task.stage=kind.equals("CONTAINER")?"PRECHECK":"COMMAND";task.message="任务已保存，等待执行";
-        task.createdAt=clock.getAsLong();task.updatedAt=task.createdAt;task.deadline=task.createdAt+policy.taskSeconds()*1000L;return task;
+        task.createdAt=clock.getAsLong();task.updatedAt=task.createdAt;task.observationStartedAt=task.createdAt;task.lastActivityAt=task.lastEvidenceAt=task.createdAt;task.deadline=task.createdAt+policy.taskSeconds()*1000L;return task;
     }
     public synchronized AgentTask submitCommand(ToolAuditContext context,String title,String command,int seconds){
         var decision=new CommandPolicyService().check(command);if(!decision.allowed())throw new IllegalArgumentException(decision.reason());
-        var task=task(context,title,"COMMAND");task.command=command;task.commandTimeoutSeconds=seconds>0?Math.min(seconds,policy.taskSeconds()):policy.commandSeconds();
+        if(seconds<0 || seconds>86400)throw new IllegalArgumentException("显式命令时限应为0到86400秒；0表示根据执行状态观察");
+        var task=task(context,title,"COMMAND");task.command=command;task.commandTimeoutSeconds=seconds;
         for(var old:repository.list(task.userId,task.sessionId))if(!old.terminal() && Objects.equals(old.requestId,task.requestId) && Objects.equals(old.connectionId,task.connectionId) && Objects.equals(old.command,command))return old;
         repository.insert(task,List.of(new AgentTaskStep(task.id,"COMMAND",title)));return task;
     }
@@ -65,7 +66,7 @@ public class LongTaskService {
     public List<Map<String,Object>> list(String user,String session){return repository.list(user,session).stream().map(task->view(task)).toList();}
     public Map<String,Object> view(AgentTask task){var value=task.view();value.put("steps",repository.steps(task.id).stream().map(AgentTaskStep::view).toList());return value;}
     public void cancel(String id,String user,String session){var task=owned(id,user,session);if(!task.terminal())repository.requestCancel(id);}
-    public void resume(String id,String user,String session){var task=owned(id,user,session);if(!task.status.equals("UNKNOWN"))throw new IllegalArgumentException("只有结果待核查任务需要恢复；已完成任务不会重放");task.status="WAITING";task.message="将先查询远端作业和已有资源，不重放已启动作业";task.deadline=clock.getAsLong()+policy.taskSeconds()*1000L;repository.save(task);}
+    public void resume(String id,String user,String session){var task=owned(id,user,session);if(!Set.of("UNKNOWN","NEEDS_ATTENTION").contains(task.status))throw new IllegalArgumentException("只有待核查或暂停的任务需要恢复；已完成任务不会重放");task.status="WAITING";task.message="将先查询远端作业和已有资源，不重放已启动作业";task.observationStartedAt=task.lastActivityAt=task.lastEvidenceAt=clock.getAsLong();task.deadline=clock.getAsLong()+policy.taskSeconds()*1000L;repository.save(task);}
     @Scheduled(fixedDelay=2000) public void schedule(){
         for(String id:repository.runnable()){
             if(active.size()>=2)break;if(!active.add(id))continue;
@@ -76,9 +77,12 @@ public class LongTaskService {
         long now=clock.getAsLong();if(!repository.claim(id,worker,now,now+45000))return;
         AgentTask task=null;
         try {
-            task=repository.find(id);if(task==null || task.terminal())return;
+            task=repository.find(id);if(task==null || task.terminal() || task.status.equals("NEEDS_ATTENTION") && !task.cancelRequested)return;
             var steps=repository.steps(id);
-            if(task.cancelRequested || task.status.equals("CANCELLING") || now>=task.deadline){cancelTick(task,steps,now>=task.deadline);return;}
+            if(task.cancelRequested || task.status.equals("CANCELLING")){cancelTick(task,steps,false);return;}
+            if(task.lastActivityAt==0)task.lastActivityAt=task.lastEvidenceAt=task.createdAt;
+            if(task.observationStartedAt==0)task.observationStartedAt=task.createdAt;
+            if(now>=task.deadline){task.status="CHECKING";task.message="到达观察时间，正在查询原作业和已有资源，不取消或重新执行";task.deadline=now+policy.taskSeconds()*1000L;}
             String stage=task.stage;
             var step=steps.stream().filter(s->s.key.equals(stage)).findFirst().orElseThrow();
             if(task.kind.equals("COMMAND")){command(task,step,task.command,task.commandTimeoutSeconds);return;}
@@ -89,11 +93,16 @@ public class LongTaskService {
                 case "READY" -> ready(task,step);
                 default -> throw new IllegalStateException("未知任务步骤");
             }
-        }catch(ProbeUnavailable e){if(task!=null){task.status="WAITING";task.message="暂时无法连接服务器，将继续查询已有作业，不重复执行";repository.save(task);}}
+        }catch(ProbeUnavailable e){if(task!=null){task.status=clock.getAsLong()-task.lastActivityAt>=policy.taskSeconds()*2000L?"NEEDS_ATTENTION":"WAITING_CONNECTION";task.message="暂时无法连接服务器，不能判断远端成败；只查询原作业，不重复执行";repository.save(task);}}
         catch(Exception e){if(task!=null){task.status="FAILED";task.message="任务停止："+brief(task,e.getMessage());
             for(var step:repository.steps(id))if(step.key.equals(task.stage)){finishStep(step,1,safe(task,e.getMessage()));break;}
             repository.save(task);}}
-        finally{repository.release(id,worker);if(task!=null && task.terminal())runner.close(id);}
+        finally{
+            if(task!=null && !task.terminal() && !task.cancelRequested && clock.getAsLong()-task.observationStartedAt>=policy.maxObservationSeconds()*1000L){
+                task.status="NEEDS_ATTENTION";task.message="达到自动观察资源上限，已保留检查点并暂停后续步骤；没有取消远端作业";repository.save(task);
+            }
+            repository.release(id,worker);if(task!=null && task.terminal())runner.close(id);
+        }
     }
     private String q(String text){return ShellCommandAnalyzer.shellQuote(text);}
     private cn.bugstack.ai.domain.ssh.model.valobj.CommandExecutionResult query(AgentTask t,String command){
@@ -134,7 +143,7 @@ public class LongTaskService {
     private void image(AgentTask t,AgentTaskStep step){
         var exists=query(t,"sudo -n docker image inspect "+q(t.container.image()));
         if(exists.status().equals("SUCCEEDED")){finishStep(step,0,"镜像已存在");advance(t,"CREATE","镜像已就绪，正在核查容器");return;}
-        var job=job(t,step,"sudo -n docker pull "+q(t.container.image()),policy.pullSeconds());
+        var job=job(t,step,"sudo -n docker pull "+q(t.container.image()),0);
         if(job.status().equals("EXIT")){
             if(job.exitCode()==0){finishStep(step,0,job.output());advance(t,"CREATE","镜像已就绪，正在创建容器");}
             else if(step.attempts<2 && networkFailure(job.output())){step.status="PENDING";step.remoteId=null;repository.saveStep(step);t.status="WAITING";t.message="镜像下载遇到临时网络错误，将进行一次重试";repository.save(t);}
@@ -160,8 +169,21 @@ public class LongTaskService {
         var result=readiness.check(t,existing);
         if(result.status().equals("READY")){finishStep(step,0,result.message());t.status="SUCCEEDED";t.message=result.message()+"。容器："+t.container.name()+"；端口："+t.container.bindAddress()+":"+t.container.hostPort();repository.save(t);}
         else if(result.status().equals("FAILED")){finishStep(step,1,result.message()+"\n"+result.output());t.status="FAILED";t.message=result.message()+"："+brief(t,result.output());repository.save(t);}
-        else if(clock.getAsLong()-step.startedAt>=t.container.readinessTimeoutSeconds()*1000L){finishStep(step,124,result.message());t.status="FAILED";t.message="容器已创建，但在启动等待期限内未通过验证；请查看日志，不要重新创建";repository.save(t);}
-        else{t.status="WAITING";t.message=result.message();repository.save(t);}
+        else{
+            String evidence=existing.path("State").path("Status").asText()+"|"+existing.path("State").path("Health").path("Status").asText()+"|"+result.message();
+            boolean changed=remember(step,evidence);
+            if(changed){t.lastEvidenceAt=t.lastActivityAt=clock.getAsLong();t.progressEvidence="容器状态发生变化，尚未通过应用验收";repository.saveStep(step);}
+            long quiet=clock.getAsLong()-t.lastActivityAt,window=t.container.readinessTimeoutSeconds()*1000L;
+            if(quiet>=window) {
+                var logs=query(t,"sudo -n docker logs --tail 10 "+q(t.resourceId)+" 2>&1");
+                String fingerprint=normalizedOutput(logs.stdout());
+                if(!fingerprint.isBlank() && remember(step,"logs:"+fingerprint)){
+                    t.lastEvidenceAt=t.lastActivityAt=clock.getAsLong();t.progressEvidence="取得新的启动日志，需要结合应用连接检查判断";repository.saveStep(step);quiet=0;
+                }
+            }
+            t.status=quiet>=window*2?"NEEDS_ATTENTION":quiet>=window?"CHECKING":"WAITING";
+            t.message=t.status.equals("NEEDS_ATTENTION")?"容器仍未通过验收，连续检查未取得新证据；已暂停自动检查，保留现有容器，可重新核查":result.message();repository.save(t);
+        }
     }
     private ILongTaskRunner.Job job(AgentTask t,AgentTaskStep step,String command,int seconds){
         boolean fresh=step.remoteId==null;
@@ -170,9 +192,16 @@ public class LongTaskService {
         // 远端原子 claim 保证同一个作业编号只启动一次；重启恢复始终先查询。
         if(result.status().equals("MISSING")) {
             if(fresh || step.key.equals("IMAGE") || new CommandPolicyService().check(step.command).readOnly())
-                result=runner.start(t,step.remoteId,step.command,Math.min(seconds,Math.max(1,(int)((t.deadline-clock.getAsLong())/1000))));
+                result=runner.start(t,step.remoteId,step.command,seconds);
             else result=new ILongTaskRunner.Job("UNKNOWN",null,"本地记录作业已经发起，但远端标记缺失，不能证明操作未执行；未重发写命令");
         }
+        if(fresh){t.lastEvidenceAt=t.lastActivityAt=clock.getAsLong();}
+        String fingerprint=normalizedOutput(result.output());
+        if(!fingerprint.isBlank() && remember(step,fingerprint)){
+            t.lastEvidenceAt=t.lastActivityAt=clock.getAsLong();t.progressEvidence="取得新的作业输出；输出变化尚不等于目标完成";
+        }
+        if(result.cpuTicks()>step.cpuTicks || result.ioBytes()>step.ioBytes){t.lastActivityAt=clock.getAsLong();t.progressEvidence="作业仍有 CPU 或磁盘活动，继续观察；尚未确认业务进展";}
+        step.cpuTicks=Math.max(step.cpuTicks,result.cpuTicks());step.ioBytes=Math.max(step.ioBytes,result.ioBytes());
         step.output=result.output();repository.saveStep(step);return result;
     }
     private void command(AgentTask t,AgentTaskStep step,String command,int seconds){
@@ -181,11 +210,22 @@ public class LongTaskService {
         else handleJobState(t,result,"命令正在后台执行，关闭聊天不会取消它");
     }
     private void handleJobState(AgentTask t,ILongTaskRunner.Job job,String progress){
-        t.status=job.status().equals("UNKNOWN")?"UNKNOWN":job.status().equals("UNREACHABLE")?"WAITING":"RUNNING";
-        t.message=job.status().equals("UNKNOWN")?"远端作业有执行标记，但结果无法确认；没有重发命令，请先核查":job.status().equals("UNREACHABLE")?"暂时无法读取进度，将继续查询已有作业":progress;repository.save(t);
+        long quiet=clock.getAsLong()-t.lastActivityAt,window=(t.stage.equals("IMAGE")?policy.pullSeconds():policy.commandSeconds())*1000L;
+        t.status=job.status().equals("UNKNOWN")?"UNKNOWN":job.status().equals("UNREACHABLE")?"WAITING_CONNECTION":quiet>=window*2?"NEEDS_ATTENTION":quiet>=window?"CHECKING":"RUNNING";
+        t.message=t.status.equals("NEEDS_ATTENTION")?"长时间未确认进展或已达到观察资源上限，已暂停后续步骤；远端作业未被取消，请核查原作业":job.status().equals("UNKNOWN")?"远端作业有执行标记，但结果无法确认；没有重发命令，请先核查":job.status().equals("UNREACHABLE")?"暂时无法读取进度，将继续查询已有作业":t.status.equals("CHECKING")?"暂未取得新进展，已查询原进程；将继续检查，不重复提交":progress;repository.save(t);
     }
     private void failJob(AgentTask t,AgentTaskStep step,ILongTaskRunner.Job job,String message){finishStep(step,job.exitCode(),job.output());t.status="FAILED";t.message=message+"："+brief(t,job.output());repository.save(t);}
-    private void advance(AgentTask t,String stage,String message){t.stage=stage;t.status="RUNNING";t.message=message;repository.save(t);}
+    private void advance(AgentTask t,String stage,String message){t.stage=stage;t.status="RUNNING";t.message=message;t.lastEvidenceAt=t.lastActivityAt=clock.getAsLong();t.progressEvidence=message;repository.save(t);}
+    private String normalizedOutput(String output){
+        if(output==null)return "";
+        String normalized=output.replaceAll("\\u001B\\[[;\\d]*[A-Za-z]","")
+                .replaceAll("\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?Z?","[time]");
+        normalized=normalized.lines().map(String::trim).filter(s->!s.isBlank()).distinct().collect(java.util.stream.Collectors.joining("\n"));
+        if(normalized.isBlank())return "";
+        try{return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(normalized.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+        catch(java.security.NoSuchAlgorithmException error){throw new IllegalStateException(error);}
+    }
+    private boolean remember(AgentTaskStep step,String fingerprint){return step.observedOutput.size()<2048 && step.observedOutput.add(fingerprint);}
     private void finishStep(AgentTaskStep step,Integer code,String output){step.exitCode=code;step.output=output;step.status=code!=null && code==0?"SUCCEEDED":"FAILED";step.finishedAt=clock.getAsLong();repository.saveStep(step);}
     private void cancelTick(AgentTask t,List<AgentTaskStep> steps,boolean deadline){
         var running=steps.stream().filter(step->step.status.equals("RUNNING") && step.remoteId!=null).findFirst();

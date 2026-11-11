@@ -50,6 +50,13 @@ public class ToolExecutionAudit {
         private final SessionKey key;
         private final String requestId;
         private final Consumer<Notification> listener;
+        private final java.util.List<Consumer<Notification>> observers = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        /** 在同一个请求预算内观察工具事件，不新建请求或重置失败预算。 */
+        public AutoCloseable observe(Consumer<Notification> observer) {
+            observers.add(observer);
+            return () -> observers.remove(observer);
+        }
         private final Map<String, ToolExecutionRecord> records = new ConcurrentHashMap<>();
         private Subscription(SessionKey key, String requestId, Consumer<Notification> listener) {
             this.key = key; this.requestId = requestId; this.listener = listener;
@@ -66,11 +73,12 @@ public class ToolExecutionAudit {
 
     public ToolAuditContext context(CallbackContext callback) {
         Map<String, Object> state = callback.state();
-        if (!(state.get("terminalSessionId") instanceof String)) {
+        Subscription active = subscriptions.get(new SessionKey(callback.userId(), callback.sessionId()));
+        // 根请求使用本轮入口的绑定；子 Runner 保留父调用显式传入的终端，避免串到其他请求。
+        if (active != null || !(state.get("terminalSessionId") instanceof String stateTerminal) || stateTerminal.isBlank()) {
             cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.get(callback.sessionId())
                     .ifPresent(terminal -> state.put("terminalSessionId", terminal));
         }
-        Subscription active = subscriptions.get(new SessionKey(callback.userId(), callback.sessionId()));
         boolean child = active == null && state.get(ToolAuditContext.PARENT_EXECUTION) instanceof String;
         // 根请求以当前订阅为准，不能沿用上一次请求留在 Session 中的 requestId。
         String requestId = active != null ? active.requestId : child ? string(state.get(ToolAuditContext.ROOT_REQUEST), callback.invocationId()) : callback.invocationId();
@@ -160,6 +168,10 @@ public class ToolExecutionAudit {
                             attempt.context.invocation() == null ? started.sessionId() : attempt.context.invocation().session().id(), true);
                 }
             }
+            if(!node.has("commandDispatched") || node.path("commandDispatched").asBoolean()) {
+                JsonNode stable=node.deepCopy();stripVolatile(stable);
+                attempt.context.guard().observe(started.executionId(),started.toolName(),status,started.toolName()+"|"+started.terminalSessionId()+"|"+stable);
+            }
             updateGuard(started, status, node.path("failureType").asText());
         }
         finish(started.finished(status, sanitize(result), null));
@@ -178,6 +190,22 @@ public class ToolExecutionAudit {
         if("WAITING_APPROVAL".equals(outcome)) return Map.of("success",false,"executionStatus","WAITING_APPROVAL","output","子任务变更等待用户确认");
         return Map.of("success", false, "executionStatus", "UNKNOWN".equals(outcome) ? "UNKNOWN" : "FAILED",
                 "failureType", "CHILD_TOOL_FAILED", "output", "子工具存在失败或被拦截的操作，请检查执行记录", "originalResult", original);
+    }
+
+    public Map<String,Object> withProgress(ToolExecutionRecord record,Map<String,Object> original) {
+        var guard=guards.get(record.requestId());if(guard==null)return original;
+        var result=new LinkedHashMap<String,Object>(original);
+        result.put("executionEvidenceId",record.executionId());
+        result.put("progressState",guard.progressState());
+        result.put("progressNote","工具返回不等于目标完成；每完成一个阶段、改变方法或连续失败时，用 reportProgress 引用执行证据并说明下一项验证");
+        return result;
+    }
+    private void stripVolatile(JsonNode node) {
+        if(node.isObject()) {
+            var object=(ObjectNode)node;
+            for(String key:List.of("timestamp","updatedAt","createdAt","duration","durationMs","timeoutMs","attempts","attemptCount","command","executionEvidenceId","progressState","progressNote"))object.remove(key);
+            object.elements().forEachRemaining(this::stripVolatile);
+        }else if(node.isArray())node.elements().forEachRemaining(this::stripVolatile);
     }
 
     public void failed(ToolExecutionRecord started, Throwable error) {
@@ -262,6 +290,10 @@ public class ToolExecutionAudit {
         Subscription subscription = subscriptions.get(new SessionKey(record.userId(), record.sessionId()));
         if (subscription == null || !subscription.requestId.equals(record.requestId())) return;
         subscription.records.put(record.executionId(), record);
+        for (Consumer<Notification> observer : subscription.observers) {
+            try { observer.accept(new Notification(record, persisted)); }
+            catch (RuntimeException failure) { log.warn("工具上下文更新失败 executionId={}", record.executionId(), failure); }
+        }
         try { subscription.listener.accept(new Notification(record, persisted)); }
         catch (RuntimeException failure) { log.warn("工具事件通知失败 executionId={}", record.executionId(), failure); }
     }

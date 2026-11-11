@@ -16,11 +16,11 @@ public class RequestExecutionGuardTest {
         finish(guard,"A","3","REPORTED_FAILURE","COMMAND_FAILED");
         assertNotNull(guard.reserve("A")); assertNull(guard.reserve("B"));
     }
-    @Test public void stopsEntireRequestAfterFiveFailuresAcrossDifferentOperations() {
+    @Test public void fiveDifferentFailuresRequestReviewRatherThanStoppingAllWork() {
         var guard=guard(); for(int n=0;n<4;n++) finish(guard,"cmd"+n,"id"+n,"REPORTED_FAILURE","COMMAND_FAILED");
         guard.checkActive();
         finish(guard,"cmd4","id4","REPORTED_FAILURE","COMMAND_FAILED");
-        assertEquals("CONSECUTIVE_FAILURE_LIMIT", assertThrows(ExecutionHaltedException.class,()->guard.reserve("new")).reason());
+        guard.checkActive(); assertEquals("CHECKING",guard.progressState()); assertNull(guard.reserve("new"));
     }
     @Test public void successfulLeafResetsConsecutiveFailures() {
         var guard=guard(); finish(guard,"A","1","REPORTED_FAILURE",null); finish(guard,"B","2","RETURNED",null); finish(guard,"C","3","REPORTED_FAILURE",null);
@@ -52,9 +52,9 @@ public class RequestExecutionGuardTest {
         guard.finished("parent","parent",null,"REPORTED_FAILURE","CHILD_TOOL_FAILED");
         assertTrue(guard.summary().contains("连续失败 1 次")); assertEquals("REPORTED_FAILURE",guard.sessionOutcome("c"));
     }
-    @Test public void expiredDeadlinePreventsAnyExecution() {
-        var guard=new RequestExecutionGuard(ExecutionPolicyProperties.defaults(),System.currentTimeMillis()-1);
-        assertEquals("REQUEST_TIMEOUT",assertThrows(ExecutionHaltedException.class,()->guard.reserve("x")).reason());
+    @Test public void expiredObservationDoesNotImmediatelyPreventExecution() {
+        var guard=new RequestExecutionGuard(ExecutionPolicyProperties.defaults(),1000,()->1000L);
+        assertNull(guard.reserve("x"));
     }
     @Test public void onlyReadOnlyNotSentTransientFailuresCanRetryAtMostTwice() {
         var notSent=CommandExecutionResult.notSent("COMMAND_BUSY",true);
@@ -75,7 +75,7 @@ public class RequestExecutionGuardTest {
         var guard=guard();
         for(int i=0;i<300;i++) finish(guard,"same","success-"+i,"RETURNED",null);
         for(int i=0;i<5;i++) finish(guard,"bad-"+i,"failure-"+i,"REPORTED_FAILURE","COMMAND_FAILED");
-        assertEquals("CONSECUTIVE_FAILURE_LIMIT",assertThrows(ExecutionHaltedException.class,guard::checkActive).reason());
+        guard.checkActive();assertEquals("CHECKING",guard.progressState());
     }
     @Test public void rewriteBudgetIsRequestWideAndDoesNotConsumeExecutionFailureBudget() {
         var guard=guard(); assertTrue(guard.allowPolicyRewrite()); assertEquals(1,guard.policyRewritesRemaining());
@@ -91,11 +91,11 @@ public class RequestExecutionGuardTest {
         guard.checkActive(); assertNull(guard.reserve("busy"));
         assertTrue(guard.summary().contains("连续失败 0 次"));
     }
-    @Test public void lateParallelSuccessDoesNotEraseLatchedFailureCount() {
+    @Test public void lateSuccessCanRecoverOrdinaryFailureCountWithoutErasingPermanentBlocks() {
         var guard=guard(); assertNull(guard.reserve("running")); guard.register("running",null,"session");
         for(int i=0;i<5;i++) finish(guard,"bad"+i,"bad"+i,"REPORTED_FAILURE","COMMAND_FAILED");
         guard.finished("running","running",null,"RETURNED",null);
-        assertEquals("CONSECUTIVE_FAILURE_LIMIT",guard.stopReason());
-        assertTrue(guard.summary().contains("连续失败 5 次"));
+        assertNull(guard.stopReason());
+        assertTrue(guard.summary().contains("连续失败 0 次"));
     }
 }

@@ -57,6 +57,16 @@ public class AgentServiceController implements IAgentService {
     private IChatService chatService;
 
     @Resource
+    private cn.bugstack.ai.cases.IAIAgentReActServiceCase reactServiceCase;
+
+    private boolean enhancedMode(ChatRequestDTO request) {
+        String mode = request.getExecutionMode();
+        if (mode == null || mode.isBlank() || "standard".equals(mode)) return false;
+        if ("enhanced".equals(mode)) return true;
+        throw new IllegalArgumentException("未知聊天模式，请选择 standard 或 enhanced");
+    }
+
+    @Resource
     private cn.bugstack.ai.domain.agent.service.execution.RunFailureSummaryService failureSummaryService;
 
     @Resource
@@ -156,7 +166,10 @@ public class AgentServiceController implements IAgentService {
                 sessionId = chatService.createSession(requestDTO.getAgentId(), requestDTO.getUserId());
             }
 
-            List<String> messages = chatService.handleMessage(requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
+            requestDTO.setSessionId(sessionId);
+            List<String> messages = enhancedMode(requestDTO)
+                    ? List.of(reactServiceCase.chat(requestDTO))
+                    : chatService.handleMessage(requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
 
             ChatResponseDTO responseDTO = new ChatResponseDTO();
             responseDTO.setContent(String.join("\n", messages));
@@ -187,10 +200,12 @@ public class AgentServiceController implements IAgentService {
     @RequestMapping(value = "chat_stream", method = RequestMethod.POST, produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Override
     public ResponseBodyEmitter chatStream(@RequestBody ChatRequestDTO request) {
-        SseEmitter emitter=createSseEmitter(10*60*1000L);
+        SseEmitter emitter=createSseEmitter(0L);
         try {
+            boolean enhanced=enhancedMode(request);
             String sessionId=request.getSessionId();
             if(sessionId==null || sessionId.isBlank()) sessionId=chatService.createSession(request.getAgentId(),request.getUserId());
+            request.setSessionId(sessionId);
             final String chatSession=sessionId;
             Set<String> calls=ConcurrentHashMap.newKeySet(), results=ConcurrentHashMap.newKeySet();
             var activeControl=new AtomicReference<RunStreamControl>();
@@ -199,6 +214,7 @@ public class AgentServiceController implements IAgentService {
                 if(active!=null && !active.closed()) synchronized(active){sendAuditEvent(emitter,notification,calls,results);}
             });
             var control=new RunStreamControl(emitter,subscription.requestId(),subscription.guard());
+            subscription.guard().progress().objective(request.getMessage());
             activeControl.set(control);
 
             Thread worker=new Thread(()->{
@@ -223,8 +239,10 @@ public class AgentServiceController implements IAgentService {
                     if(request.getTerminalSessionId()!=null && !request.getTerminalSessionId().isBlank()) {
                         agentEventPublisher.registerTerminal(request.getTerminalSessionId(),listener);terminals.add(request.getTerminalSessionId());
                     }
-                    control.send(Map.of("event","status","stage","thinking","sessionId",chatSession,"content","正在分析请求…"));
-                    Flowable<Event> events=Flowable.defer(()->chatService.handleMessageStream(request.getAgentId(),request.getUserId(),chatSession,request.getMessage(),request.getTerminalSessionId()));
+                    control.send(Map.of("event","status","stage","thinking","sessionId",chatSession,"executionMode",enhanced ? "enhanced" : "standard","content","正在分析请求…"));
+                    Flowable<Event> events=Flowable.defer(()->enhanced
+                            ? reactServiceCase.executeEvents(request,subscription)
+                            : chatService.handleMessageStream(request.getAgentId(),request.getUserId(),chatSession,request.getMessage(),request.getTerminalSessionId()));
                     control.events(events).blockingForEach(event->{
                         if(control.closed()) return;
                         synchronized(control) {
@@ -265,8 +283,9 @@ public class AgentServiceController implements IAgentService {
                     control.send(Map.of("event","status","stage","responding","content","已停止执行，正在整理异常说明（最多10秒）…"));
                     String summary=failureSummaryService.summarize(request.getAgentId(),report,control.cancellation());
                     control.send(Map.of("event","text","stage","responding","fullText",previous+separator+summary));
-                    control.finish("failed",reason,Map.of("totalToolCalls",calls.size(),"content",summary));
-                    log.warn("请求异常结束 requestId={} reason={}",subscription.requestId(),reason);
+                    boolean paused=Set.of("PROGRESS_STALLED","PROGRESS_REVIEW_REQUIRED","RESOURCE_BUDGET").contains(reason);
+                    control.finish(paused?"paused":"failed",reason,Map.of("totalToolCalls",calls.size(),"content",summary));
+                    log.warn("请求异常结束 requestId={} reason={}",subscription.requestId(),reason,error);
                 } finally {
                     heartbeat.dispose();subscription.close();
                     invocations.forEach(agentEventPublisher::unregister);

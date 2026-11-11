@@ -1,5 +1,7 @@
 package cn.bugstack.ai.domain.agent.service.armory.matter.tools;
 
+import io.reactivex.rxjava3.core.Flowable;
+
 import cn.bugstack.ai.domain.agent.model.valobj.dynamic.AgentExecutionContext;
 import cn.bugstack.ai.domain.agent.model.valobj.dynamic.DynamicTask;
 import cn.bugstack.ai.domain.agent.model.valobj.dynamic.TaskStatus;
@@ -109,7 +111,7 @@ public class SubAgentDispatchService {
      * 执行单个任务并原地更新任务状态（含失败重试）：
      * <ol>
      *   <li>置为 RUNNING，从 AgentCatalog 查找子 Agent（先按父 Agent 精确匹配，再全局兜底），找不到直接置 FAILED（确定性错误，不重试）</li>
-     *   <li>以独立会话执行一次子 Agent，按任务超时时间（默认 120 秒）等待，不重放整个任务</li>
+     *   <li>以独立会话执行一次子 Agent，共享根请求的证据观察策略，不按固定 120 秒取消</li>
      *   <li>结合真实子工具结果判定 COMPLETED / FAILED / UNKNOWN / STOPPED</li>
      *   <li>回写 attempts（实际尝试次数），finally 中清理 ThreadLocal，避免线程池复用导致的会话串扰</li>
      * </ol>
@@ -154,9 +156,12 @@ public class SubAgentDispatchService {
                     }
 
                     List<Event> events = new ArrayList<>();
+                    var executionGuard=guard!=null?guard:new cn.bugstack.ai.domain.agent.service.execution.RequestExecutionGuard(
+                            cn.bugstack.ai.domain.agent.service.execution.ExecutionPolicyProperties.defaults(),
+                            System.currentTimeMillis()+Math.max(1,Optional.ofNullable(task.getTimeoutSeconds()).orElse(120))*1000L);
                     runner.runAsync(context.getUserId(), "subagent-" + invocationId + "-" + attempt,
                                     content, runConfig, childState)
-                            .timeout(Optional.ofNullable(task.getTimeoutSeconds()).orElse(120), TimeUnit.SECONDS)
+                            .takeUntil(Flowable.interval(1,TimeUnit.SECONDS).map(tick->{executionGuard.checkActive();return tick;}).filter(tick->false))
                             .blockingForEach(event -> {
                                 // 边执行边发布，前端可以实时看到子 Agent 的工具调用，而不是等待任务汇总后一次性返回（否则ui渲染效果就不咋地了，一坨一坨的）。
                                 events.add(event);
