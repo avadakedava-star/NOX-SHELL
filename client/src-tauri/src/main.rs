@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    walissh_client_lib::run()
+    nox_shell_client_lib::run()
 }

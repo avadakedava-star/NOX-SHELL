@@ -30,7 +30,7 @@ public class DynamicTask {
     /** 依赖的前置任务 ID 列表，所有依赖任务 COMPLETED 后本任务才会被调度 */
     @Builder.Default
     private List<String> dependsOn = new ArrayList<>();
-    /** 单任务执行超时时间（秒），超时后任务标记为 FAILED */
+    /** 兼容旧计划的观察窗口（秒）；有根请求时统一使用根请求证据策略，不作为固定取消时间。 */
     @Builder.Default
     private Integer timeoutSeconds = 120;
     /**

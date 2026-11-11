@@ -94,3 +94,11 @@ assert.equal(applyTraceEvent(trace,{event:'status',stage:'thinking',content:'lat
 trace=applyTraceEvent(createRunTrace(),{event:'run_finished',status:'failed',stopReason:'REQUEST_TIMEOUT',content:'模型超时'})
 assert.equal(trace.stage,'error');assert.equal(trace.stopReason,'REQUEST_TIMEOUT')
 console.log('请求终态定向测试通过：普通工具失败继续、明确终态结束、忽略晚到状态。')
+
+trace=applyTraceEvent(applyTraceEvent(createRunTrace(),call),{event:'run_finished',status:'paused',stopReason:'PROGRESS_STALLED',content:'没有新证据，保留原作业待核查'})
+assert.equal(trace.stage,'paused')
+assert.equal(trace.error,undefined)
+assert.equal(trace.stopReason,'PROGRESS_STALLED')
+assert.equal(trace.tools[0].status,'unknown')
+assert.equal(applyTraceEvent(trace,{event:'status',stage:'thinking',content:'late'}).stage,'paused')
+console.log('进展暂停测试通过：暂停不标成失败或成功，保留未知工具状态，忽略晚到事件。')

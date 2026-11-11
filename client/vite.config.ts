@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const proxyTarget = process.env.WALISSH_PROXY_TARGET || 'http://127.0.0.1:8091'
+const proxyTarget = process.env.NOX_SHELL_PROXY_TARGET || process.env.WALISSH_PROXY_TARGET || 'http://127.0.0.1:8091'
 
 // https://vite.dev/config/
 export default defineConfig({

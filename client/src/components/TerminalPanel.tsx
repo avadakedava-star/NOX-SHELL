@@ -8,6 +8,8 @@ import { useConnectionStore } from '../stores/connectionStore'
 import { useAgentStore } from '../stores/agentStore'
 import { openTerminal, writeInput, readOutput, resizeTerminal, closeTerminal, terminalReadState } from '../api/terminal'
 import { ConnectionStatus } from '../types'
+import { WelcomePanel } from './WelcomePanel'
+import { Icon } from './Icon'
 
 /** 终端会话状态 */
 interface TerminalSession {
@@ -40,9 +42,9 @@ const POLL_INTERVAL = 50
 const TERMINAL_INSET = 8
 const TERMINAL_BOTTOM_GAP = 24
 
-export function TerminalPanel() {
+export function TerminalPanel({ onOpenConnection, onOpenAssistant, onOpenServers }: { onOpenConnection: () => void; onOpenAssistant: () => void; onOpenServers: () => void }) {
   const { colors } = useThemeStore()
-  const { currentConnectionId, connections, connect, disconnect, setTerminalSession } = useConnectionStore()
+  const { currentConnectionId, connections, connect, disconnect, setTerminalSession, selectConnection } = useConnectionStore()
   const { createSession: createAgentSession } = useAgentStore()
 
   /** connectionId → 终端状态（每个连接独立 Terminal 实例，切换时保留日志） */
@@ -73,7 +75,7 @@ export function TerminalPanel() {
         red: colors.red,
         green: colors.green,
         yellow: colors.yellow,
-        blue: colors.accent,
+        blue: '#79a9ff',
         magenta: '#c084fc',
         cyan: '#22d3ee',
         white: colors.text,
@@ -81,7 +83,7 @@ export function TerminalPanel() {
         brightRed: colors.red,
         brightGreen: colors.green,
         brightYellow: colors.yellow,
-        brightBlue: colors.accent,
+        brightBlue: '#99bcff',
         brightMagenta: '#c084fc',
         brightCyan: '#22d3ee',
         brightWhite: '#ffffff',
@@ -89,6 +91,21 @@ export function TerminalPanel() {
       rows: 24,
       cols: 120,
       allowProposedApi: false,
+    })
+  }, [colors])
+
+  // 更新已打开终端的配色，不重建 SSH 会话。
+  useEffect(() => {
+    terminalStates.current.forEach(({ terminal }) => {
+      terminal.options.theme = {
+        ...terminal.options.theme,
+        background: colors.bgPrimary, foreground: colors.text,
+        cursor: colors.accent, cursorAccent: colors.bgPrimary,
+        selectionBackground: colors.accent + '50',
+        red: colors.red, green: colors.green, yellow: colors.yellow,
+        white: colors.text, brightRed: colors.red, brightGreen: colors.green,
+        brightYellow: colors.yellow,
+      }
     })
   }, [colors])
 
@@ -320,7 +337,7 @@ export function TerminalPanel() {
 
   /**
    * 切换终端显示：visibility + z-index
-   * 
+   *
    * 关键：用 visibility:hidden 代替 display:none
    * - visibility:hidden 不改变元素尺寸 → xterm canvas 尺寸不变 → 不触发 ResizeObserver
    * - display:none 让元素尺寸归零 → 恢复时 canvas 重建 → 闪烁 + ResizeObserver 触发 + shell 重绘 prompt
@@ -387,156 +404,173 @@ export function TerminalPanel() {
 
   // 未选择连接：只显示空状态，不渲染 wrapper（没有终端需要保留）
   if (!currentConn) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center min-w-0" style={{ backgroundColor: colors.bgPrimary }}>
-        <div className="text-center">
-          <div className="text-6xl mb-4">🖥️</div>
-          <h2 className="text-lg font-medium mb-2" style={{ color: colors.text }}>
-            未连接 SSH 服务器
-          </h2>
-          <p className="text-sm mb-6" style={{ color: colors.textDim }}>
-            请在左侧选择或添加 SSH 连接
-          </p>
-        </div>
-      </div>
-    )
+    return <WelcomePanel onOpenConnection={onOpenConnection} onOpenAssistant={onOpenAssistant} />
   }
 
   // 始终渲染终端 wrapper，避免切换时 DOM 卸载导致其他连接的终端容器被销毁
   // 非 CONNECTED 状态用遮罩层覆盖，而不是替换整个结构
   const isConnected = currentConn.status === ConnectionStatus.CONNECTED
+  const otherConnected = connections.filter((c) => c.status === ConnectionStatus.CONNECTED && c.id !== currentConn.id)
+
+  const statusMeta = (() => {
+    switch (currentConn.status) {
+      case ConnectionStatus.CONNECTED:
+        return { code: 'LINK UP', text: '已连接', tone: 'ok' as const, color: colors.green }
+      case ConnectionStatus.CONNECTING:
+        return { code: 'HANDSHAKE', text: '建立连接中', tone: 'warn' as const, color: colors.yellow }
+      case ConnectionStatus.FAILED:
+        return { code: 'LINK FAILED', text: '连接失败', tone: 'danger' as const, color: colors.red }
+      default:
+        return { code: 'NO SESSION', text: '未连接', tone: 'idle' as const, color: colors.textDim }
+    }
+  })()
 
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0" style={{ backgroundColor: colors.bgPrimary }}>
-      {/* 终端工具栏 —— 始终显示 */}
-      <div className="h-9 flex items-center justify-between px-3 border-b flex-shrink-0" style={{ backgroundColor: colors.bgSecondary, borderColor: colors.border }}>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: isConnected ? colors.green : colors.yellow }} />
-          <span className="text-xs font-medium" style={{ color: colors.text }}>
-            {currentConn.name}
-          </span>
-          <span className="text-[10px] font-mono" style={{ color: colors.textDim }}>
-            {currentConn.username}@{currentConn.host}:{currentConn.port}
-          </span>
-          {currentState?.disconnected && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: colors.red + '20', color: colors.red }}>
-              已断开
-            </span>
-          )}
+      {/* 终端工具栏 —— 仪器条：主机身份 + 链路状态 + 会话动作 */}
+      <div className="nox-term-bar">
+        <div className="nox-term-id">
+          <span className="nox-dot" data-tone={statusMeta.tone === 'idle' ? undefined : statusMeta.tone} data-pulse={currentConn.status === ConnectionStatus.CONNECTING ? 'true' : undefined} style={{ color: statusMeta.color }} />
+          <strong className="u-truncate">{currentConn.name}</strong>
+          <span className="u-mono">{currentConn.username}@{currentConn.host}:{currentConn.port}</span>
         </div>
-        <div className="flex items-center gap-1">
+        <span className="nox-term-status" data-status={currentConn.status}>
+          {currentState?.disconnected ? 'SESSION CLOSED' : statusMeta.code}
+        </span>
+        <span style={{ flex: 1 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           {currentState?.disconnected ? (
-            <button
-              onClick={() => handleReconnect(currentConn.id)}
-              className="px-2 py-1 rounded text-[11px] font-medium transition-colors"
-              style={{ backgroundColor: colors.green, color: '#ffffff' }}
-            >
-              重新连接
+            <button className="nox-button-primary" style={{ height: 26, padding: '0 10px', fontSize: 11 }} onClick={() => handleReconnect(currentConn.id)}>
+              <Icon.Refresh size={12} /> 重新连接
             </button>
           ) : (
             <>
               <button
+                className="nox-icon-btn"
                 onClick={() => currentState?.terminal.clear()}
-                className="p-1.5 rounded hover:bg-white/10 transition-colors"
-                style={{ color: colors.textDim }}
+                disabled={!isConnected}
                 title="清屏"
+                aria-label="清屏"
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                </svg>
+                <Icon.Eraser size={14} />
               </button>
               <button
+                className="nox-icon-btn"
+                data-tone="danger"
                 onClick={async () => {
                   destroyTerminal(currentConn.id)
                   await disconnect(currentConn.id)
                 }}
-                className="p-1.5 rounded hover:bg-white/10 transition-colors"
-                style={{ color: colors.textDim }}
+                disabled={!isConnected}
                 title="断开连接"
+                aria-label="断开连接"
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
-                  <polyline points="16 17 21 12 16 7" />
-                  <line x1="21" y1="12" x2="9" y2="12" />
-                </svg>
+                <Icon.PlugOff size={14} />
               </button>
             </>
           )}
         </div>
       </div>
 
-      {/* 
+      {/* 会话标签：只列出真实存在的已连接 / 连接中主机 */}
+      {(otherConnected.length > 0 || currentConn.status === ConnectionStatus.CONNECTED || currentConn.status === ConnectionStatus.CONNECTING) && (
+        <div className="nox-term-tabs no-scrollbar" role="tablist" aria-label="SSH 会话">
+          {[...otherConnected, currentConn]
+            .filter((conn, index, list) => list.findIndex((c) => c.id === conn.id) === index)
+            .map((conn) => {
+              const active = conn.id === currentConn.id
+              return (
+                <button
+                  key={conn.id}
+                  role="tab"
+                  aria-selected={active}
+                  className="nox-term-tab"
+                  data-active={active}
+                  onClick={() => selectConnection(conn.id)}
+                  title={`${conn.username}@${conn.host}`}
+                >
+                  <span
+                    className="nox-dot"
+                    data-tone={conn.status === ConnectionStatus.CONNECTED ? 'ok' : 'warn'}
+                    data-pulse={conn.status === ConnectionStatus.CONNECTING ? 'true' : undefined}
+                    style={{ color: conn.status === ConnectionStatus.CONNECTED ? colors.green : colors.yellow }}
+                  />
+                  <span>{conn.name}</span>
+                </button>
+              )
+            })}
+          <button className="nox-term-tab-add" onClick={onOpenServers} title="打开服务器列表">
+            <Icon.Plus size={12} />
+          </button>
+        </div>
+      )}
+
+      {/*
         终端容器 —— position:relative 作为定位上下文
         所有连接的终端容器 position:absolute 堆叠，通过 visibility + z-index 切换
         visibility:hidden 不改变元素尺寸，避免 xterm canvas 重建导致的闪烁和多余 prompt
       */}
-      <div className="flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
+      <div className="nox-term-stage">
         {/* wrapper 始终存在，避免条件渲染导致 DOM 卸载 */}
         <div ref={wrapperRef} className="absolute inset-0" />
 
         {/* 非 CONNECTED 状态：遮罩层覆盖 */}
         {!isConnected && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center" style={{ backgroundColor: colors.bgPrimary }}>
-            {currentConn.status === ConnectionStatus.CONNECTING && (
-              <div className="text-center">
-                <div className="animate-spin text-4xl mb-4" style={{ color: colors.accent }}>⚙️</div>
-                <p style={{ color: colors.text }}>正在连接 {currentConn.name}...</p>
+          <div className="nox-term-overlay">
+            {currentConn.status === ConnectionStatus.CONNECTING ? (
+              <div className="nox-term-card" role="status" aria-live="polite">
+                <div className="nox-term-card-icon"><span className="spinner" style={{ width: 15, height: 15 }} /></div>
+                <h2>正在建立安全通道</h2>
+                <p className="nox-term-host">{currentConn.username}@{currentConn.host}:{currentConn.port}</p>
+                <dl className="nox-term-meta">
+                  <dt>STEP</dt><dd>SSH handshake</dd>
+                  <dt>AUTH</dt><dd>{currentConn.authType === 2 ? 'private key' : 'password'}</dd>
+                  <dt>HOST KEY</dt><dd>verifying</dd>
+                </dl>
               </div>
-            )}
-            {currentConn.status === ConnectionStatus.FAILED && (
-              <div className="text-center">
-                <div className="text-6xl mb-4">❌</div>
-                <h2 className="text-lg font-medium mb-2" style={{ color: colors.red }}>连接失败</h2>
-                <p className="text-sm mb-6" style={{ color: colors.textDim }}>
-                  {currentConn.name} 无法连接
-                </p>
-                <button
-                  onClick={() => connect(currentConn.id)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  style={{ backgroundColor: colors.accent, color: '#ffffff' }}
-                >
-                  重试连接
-                </button>
+            ) : currentConn.status === ConnectionStatus.FAILED ? (
+              <div className="nox-term-card" role="alert">
+                <div className="nox-term-card-icon" data-tone="danger"><Icon.Alert size={17} /></div>
+                <h2>连接未能建立</h2>
+                <p className="nox-term-host">{currentConn.username}@{currentConn.host}:{currentConn.port}</p>
+                <p>无法与 {currentConn.name} 建立 SSH 会话。请确认主机可达、端口开放，并检查账号或密钥是否正确。</p>
+                <div className="nox-term-card-actions">
+                  <button className="nox-button-primary" onClick={() => connect(currentConn.id)}>
+                    <Icon.Refresh size={13} /> 重试连接
+                  </button>
+                  <button className="nox-button-secondary" onClick={onOpenAssistant}>让 AI 协助排查</button>
+                </div>
               </div>
-            )}
-            {currentConn.status === ConnectionStatus.DISCONNECTED && (
-              <div className="text-center">
-                <div className="text-6xl mb-4">🔌</div>
-                <h2 className="text-lg font-medium mb-2" style={{ color: colors.text }}>
-                  {currentConn.name}
-                </h2>
-                <p className="text-sm mb-2" style={{ color: colors.textDim }}>
-                  {currentConn.username}@{currentConn.host}:{currentConn.port}
-                </p>
-                <p className="text-sm mb-6" style={{ color: colors.textDim }}>
-                  点击下方按钮建立 SSH 连接
-                </p>
-                <button
-                  onClick={() => connect(currentConn.id)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  style={{ backgroundColor: colors.accent, color: '#ffffff' }}
-                >
-                  连接服务器
-                </button>
+            ) : (
+              <div className="nox-term-card">
+                <div className="nox-term-card-icon"><Icon.Terminal size={17} /></div>
+                <h2>{currentConn.name}</h2>
+                <p className="nox-term-host">{currentConn.username}@{currentConn.host}:{currentConn.port}</p>
+                <dl className="nox-term-meta">
+                  <dt>PORT</dt><dd>{currentConn.port}</dd>
+                  <dt>AUTH</dt><dd>{currentConn.authType === 2 ? 'private key' : 'password'}</dd>
+                  <dt>STATE</dt><dd>offline</dd>
+                </dl>
+                <div className="nox-term-card-actions">
+                  <button className="nox-button-primary" onClick={() => connect(currentConn.id)}>
+                    <Icon.Plug size={13} /> 建立连接
+                  </button>
+                  <button className="nox-button-secondary" onClick={onOpenAssistant}>先问 AI</button>
+                </div>
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* 断连提示 */}
-      {currentState?.disconnected && (
-        <div className="p-3 border-t flex items-center justify-between" style={{ backgroundColor: colors.bgSecondary, borderColor: colors.border }}>
-          <span className="text-xs" style={{ color: colors.red }}>
-            ⚠️ 终端连接已断开
-          </span>
-          <button
-            onClick={() => handleReconnect(currentConn.id)}
-            className="px-3 py-1 rounded text-xs font-medium transition-colors"
-            style={{ backgroundColor: colors.accent, color: '#ffffff' }}
-          >
-            重新连接
-          </button>
+      {/* 会话中断提示 */}
+      {currentState?.disconnected && isConnected && (
+        <div
+          className="flex items-center justify-between flex-shrink-0"
+          style={{ padding: '7px 12px', borderTop: '1px solid var(--line)', background: 'color-mix(in srgb, var(--danger) 7%, var(--s1))', color: colors.red, fontSize: 11 }}
+        >
+          <span className="flex items-center gap-2"><Icon.Alert size={12} /> 终端会话已结束，日志仍保留在当前标签内</span>
+          <button className="nox-inline-btn" style={{ color: colors.red, fontSize: 11 }} onClick={() => handleReconnect(currentConn.id)}>重新连接</button>
         </div>
       )}
     </div>

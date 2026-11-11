@@ -55,12 +55,18 @@ nox-shell:
     pull-seconds: 600
     readiness-seconds: 180
     task-seconds: 1200
+    # 这些时间用于进展观察；仅显式传入的命令时限会终止远端命令。
+    max-observation-seconds: 86400
   approval:
     command-timeout-ms: 300000
   execution:
     same-command-failures: 3
     consecutive-failures: 5
+    # 观察窗口：无新证据先核查；连续两个窗口无证据且无工具执行时暂停。
     request-timeout-seconds: 180
+    # 最终资源保护上限，独立于观察窗口；不取消已提交的后台作业。
+    max-request-seconds: 3600
+    repeated-evidence-limit: 8
     command-timeout-ms: 30000
     safe-retries: 2
     max-policy-rewrites: 2

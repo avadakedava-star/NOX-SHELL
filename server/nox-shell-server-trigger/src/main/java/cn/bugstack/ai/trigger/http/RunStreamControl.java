@@ -29,9 +29,12 @@ final class RunStreamControl {
     Flowable<Boolean> cancellation(){return cancelled.filter(Boolean::booleanValue);}
     void disconnect(){if(ended.compareAndSet(false,true)){guard.halt("CANCELLED","客户端断开或停止，后续操作已取消");cancelUpstream();}}
     <T> Flowable<T> events(Flowable<T> source){
-        // 独立总时限，不因收到心跳/文字而续期；到期会取消模型/工具订阅。
-        Flowable<Long> deadline=Flowable.timer(guard.remainingMillis(),TimeUnit.MILLISECONDS)
-                .flatMap(tick->{guard.halt("REQUEST_TIMEOUT","本轮执行超过请求时限；已发送命令的结果需核查");return Flowable.error(new ExecutionHaltedException("REQUEST_TIMEOUT",guard.summary()));});
+        // 定期检查真实证据和资源预算；心跳、文字输出不会伪造进展，观察窗口到达不直接取消任务。
+        Flowable<Long> deadline=Flowable.interval(1,TimeUnit.SECONDS).map(tick->{
+            guard.checkActive();
+            if(tick%15==0 && "CHECKING".equals(guard.progressState()))send(Map.of("event","status","stage","thinking","content","正在核查执行进展，保留已有结果；未重新提交操作"));
+            return tick;
+        }).filter(tick->false);
         return Flowable.defer(()->closed() ? Flowable.<T>empty() : source).subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io()).takeUntil(deadline).takeUntil(cancellation());
     }
     synchronized void send(Map<String,Object> payload){

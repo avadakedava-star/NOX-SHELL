@@ -21,7 +21,7 @@ public class LongTaskAdkTool {
     public Map<String,Object> submitLongCommand(
         @Schema(name="title",description="任务的简短中文名称")String title,
         @Schema(name="command",description="可能超过30秒的安装、下载、构建命令；仍检查危险操作黑名单。以独立远端作业执行，退出码/日志会保存。不要附加睡眠轮询")String command,
-        @Schema(name="timeoutSeconds",description="命令时限秒数；0使用默认10分钟，最大不超过任务总时限",optional=true)Integer timeoutSeconds,
+        @Schema(name="timeoutSeconds",description="0或不传：按原作业状态和活动观察，不按聊天总时限杀进程。仅用户明确要求限定执行时长时填1到86400秒；该显式限制会终止远端命令",optional=true)Integer timeoutSeconds,
         @Schema(name="toolContext",optional=true)ToolContext toolContext){return result(()->submitted(tasks.submitCommand(context(toolContext),title,command,timeoutSeconds==null?0:timeoutSeconds)));}
     public Map<String,Object> deployContainer(
         @Schema(name="image",description="完整镜像名称与标签，例如 mysql:8.0")String image,

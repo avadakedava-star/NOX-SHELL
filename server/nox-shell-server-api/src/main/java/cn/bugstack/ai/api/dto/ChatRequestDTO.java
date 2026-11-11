@@ -10,6 +10,9 @@ public class ChatRequestDTO {
     private String sessionId;
     private String message;
 
+    /** standard：直接执行；enhanced：经过 case 历史恢复与上下文增强。缺省为 standard。 */
+    private String executionMode;
+
     /**
      * SSH 终端会话 ID（用于智能体执行命令）
      * 如果未指定，系统将尝试从会话绑定中获取

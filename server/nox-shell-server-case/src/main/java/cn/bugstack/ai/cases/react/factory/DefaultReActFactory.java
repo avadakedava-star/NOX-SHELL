@@ -65,6 +65,9 @@ public class DefaultReActFactory {
         /** SSE 事件发射器 */
         private ResponseBodyEmitter emitter;
 
+        /** 统一聊天入口使用原始事件流，不在 case 内重复写 HTTP 响应。 */
+        private io.reactivex.rxjava3.core.FlowableEmitter<com.google.adk.events.Event> eventSink;
+
         /** 覆盖整条 ReAct 链路，不能每轮重新获得失败预算。 */
         private cn.bugstack.ai.domain.agent.service.audit.ToolExecutionAudit.Subscription auditSubscription;
 

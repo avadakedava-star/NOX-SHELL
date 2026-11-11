@@ -41,6 +41,14 @@ public class RemoteJobShellTest {
         runner.start(task,"CANCEL-1","sleep 20; printf unexpected",30);runner.cancel(task,"CANCEL-1");
         var result=await("CANCEL-1");assertEquals(Integer.valueOf(143),result.exitCode());assertFalse(result.output().contains("unexpected"));
     }
+    @Test public void adaptiveJobHasNoImplicitKillAndReportsProcessActivity()throws Exception{
+        runner.start(task,"ADAPTIVE-1","while :; do :; done",0);
+        Thread.sleep(250);
+        var running=runner.poll(task,"ADAPTIVE-1");
+        assertEquals("RUNNING",running.status());assertTrue("应采集到进程组 CPU 活动",running.cpuTicks()>0);
+        assertFalse(running.output().contains("ACTIVITY:"));
+        runner.cancel(task,"ADAPTIVE-1");assertEquals(Integer.valueOf(143),await("ADAPTIVE-1").exitCode());
+    }
     @Test public void existingLegacyJobIsReadWithoutRunningAgain(){
         String legacy=runner.home+"/.walissh-agent/jobs/"+task.id+"/COMMAND-1";
         assertEquals("SUCCEEDED",runner.shell("mkdir -p "+legacy+"/claim; printf 0 > "+legacy+"/exit; printf legacy > "+legacy+"/output").status());

@@ -85,9 +85,12 @@ public class LongTaskServiceTest {
         var s=service();var task=s.submitContainer(context(),spec());for(int i=0;i<4;i++)s.tick(task.id);s.cancel(task.id,"user","chat");s.tick(task.id);
         assertEquals("CANCELLED",repository.find(task.id).status);assertTrue(remote.container);assertEquals(0,remote.probes);
     }
-    @Test public void startupDeadlineStopsChecksWithoutRecreatingContainer(){
+    @Test public void startupObservationChecksThenPausesWithoutFailingOrRecreatingContainer(){
         var s=service();var task=s.submitContainer(context(),spec());for(int i=0;i<5;i++)s.tick(task.id);now.addAndGet(181000);s.tick(task.id);
-        assertEquals("FAILED",repository.find(task.id).status);assertTrue(remote.container);assertEquals(1,(int)remote.starts.get("CREATE-1"));
+        assertEquals("CHECKING",repository.find(task.id).status);assertTrue(remote.container);
+        now.addAndGet(181000);s.tick(task.id);assertEquals("NEEDS_ATTENTION",repository.find(task.id).status);
+        assertEquals(1,(int)remote.starts.get("CREATE-1"));
+        s.resume(task.id,"user","chat");remote.ready=true;s.tick(task.id);assertEquals("SUCCEEDED",repository.find(task.id).status);
     }
     @Test public void duplicateSubmissionReturnsSameTaskAndOtherUsersCannotControlIt(){
         var s=service();var first=s.submitContainer(context(),spec());var second=s.submitContainer(context(),spec());assertEquals(first.id,second.id);
@@ -108,8 +111,32 @@ public class LongTaskServiceTest {
         when(connections.getConnection("server")).thenReturn(SshConnectionEntity.builder().connectionId("server").userId("default").host("host").port(22).username("ubuntu").build());
         var local=new ToolAuditContext("request","nox-shell-user","chat","invocation","agent","terminal",null,null);
         assertEquals("PENDING",service().submitCommand(local,"查询","printf ok",60).status);
-        var legacy=new ToolAuditContext("request-old","walissh-user","chat","invocation","agent","terminal",null,null);
-        assertEquals("PENDING",service().submitCommand(legacy,"查询","printf ok",60).status);
         assertThrows(IllegalArgumentException.class,()->service().submitCommand(context(),"查询","printf ok",60));
+    }
+    @Test public void activeJobContinuesBeyondOldTotalDeadlineAndNeverRestarts(){
+        var s=service();var task=s.submitCommand(context(),"分析文件","python analyze.py",0);s.tick(task.id);
+        now.addAndGet(1201000);remote.jobs.put("COMMAND-1",new ILongTaskRunner.Job("RUNNING",null,"running",500,4096));s.tick(task.id);
+        assertEquals("RUNNING",repository.find(task.id).status);assertEquals(1,(int)remote.starts.get("COMMAND-1"));
+        assertTrue(repository.find(task.id).progressEvidence.contains("CPU"));
+    }
+    @Test public void silentJobPausesWithoutCancellationAndResumeOnlyPollsExistingJob(){
+        var s=service();var task=s.submitCommand(context(),"构建","make package",0);s.tick(task.id);
+        now.addAndGet(601000);s.tick(task.id);assertEquals("CHECKING",repository.find(task.id).status);
+        now.addAndGet(601000);s.tick(task.id);assertEquals("NEEDS_ATTENTION",repository.find(task.id).status);
+        assertEquals("RUNNING",remote.jobs.get("COMMAND-1").status());
+        s.resume(task.id,"user","chat");remote.jobs.put("COMMAND-1",new ILongTaskRunner.Job("EXIT",0,"done"));s.tick(task.id);
+        assertEquals("SUCCEEDED",repository.find(task.id).status);assertEquals(1,(int)remote.starts.get("COMMAND-1"));
+    }
+    @Test public void completedJobIsReconciledAtOldDeadlineBeforeAnyTimeoutDecision(){
+        var s=service();var task=s.submitCommand(context(),"构建","make package",0);s.tick(task.id);
+        now.addAndGet(1300000);remote.jobs.put("COMMAND-1",new ILongTaskRunner.Job("EXIT",0,"done"));s.tick(task.id);
+        assertEquals("SUCCEEDED",repository.find(task.id).status);
+    }
+    @Test public void repeatedTimestampedLogsDoNotRenewProgress(){
+        var s=service();var task=s.submitCommand(context(),"诊断","python inspect.py",0);
+        remote.jobs.put("COMMAND-1",new ILongTaskRunner.Job("RUNNING",null,"2026-11-10T10:00:00 waiting\n"));s.tick(task.id);
+        long observed=repository.find(task.id).lastEvidenceAt;now.addAndGet(601000);
+        remote.jobs.put("COMMAND-1",new ILongTaskRunner.Job("RUNNING",null,"2026-11-10T10:10:00 waiting\n2026-11-10T10:10:01 waiting\n"));s.tick(task.id);
+        assertEquals(observed,repository.find(task.id).lastEvidenceAt);assertEquals("CHECKING",repository.find(task.id).status);
     }
 }

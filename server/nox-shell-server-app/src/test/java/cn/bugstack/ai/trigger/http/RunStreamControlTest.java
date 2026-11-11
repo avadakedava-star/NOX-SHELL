@@ -20,10 +20,10 @@ public class RunStreamControlTest {
         assertEquals(1,emitter.frames.stream().filter(x->x.contains("\"event\":\"run_finished\"")).count());
         assertTrue(emitter.completed);assertTrue(control.closed());assertEquals("REQUEST_FINISHED",guard.stopReason());
     }
-    @Test public void totalDeadlineCancelsAnOtherwiseSilentStream(){
+    @Test public void silentStreamPausesAfterObservationReviewRatherThanOriginalDeadline(){
         var cancelled=new AtomicBoolean();var guard=guard(80);var control=new RunStreamControl(new Emitter(),"request",guard);
         var error=assertThrows(RuntimeException.class,()->control.events(Flowable.never().doOnCancel(()->cancelled.set(true))).blockingSubscribe());
-        assertEquals("REQUEST_TIMEOUT",ExecutionHaltedException.find(error).reason());assertTrue(cancelled.get());
+        assertEquals("PROGRESS_REVIEW_REQUIRED",ExecutionHaltedException.find(error).reason());assertTrue(cancelled.get());
     }
     @Test public void finalSnapshotDoesNotDuplicateStreamedTextAcrossModelTurns(){
         var text=new StreamTextBuffer();text.accept("root","你",true);text.accept("root","好",true);
@@ -36,5 +36,12 @@ public class RunStreamControlTest {
         var cancelled=new AtomicBoolean();var test=control.events(Flowable.never().doOnCancel(()->cancelled.set(true))).test();
         control.disconnect();test.awaitDone(1,java.util.concurrent.TimeUnit.SECONDS).assertComplete();
         assertEquals("CANCELLED",guard.stopReason());assertTrue(control.closed());assertTrue(emitter.frames.isEmpty());
+    }
+    @Test public void streamWithFreshEvidenceContinuesBeyondOriginalObservationWindow(){
+        var guard=guard(80);var control=new RunStreamControl(new Emitter(),"request",guard);
+        var source=Flowable.interval(40,java.util.concurrent.TimeUnit.MILLISECONDS).take(8)
+                .doOnNext(n->guard.observe("id"+n,"read","RETURNED","result"+n));
+        assertEquals(8,control.events(source).toList().blockingGet().size());guard.checkActive();
+        assertNull(guard.stopReason());
     }
 }

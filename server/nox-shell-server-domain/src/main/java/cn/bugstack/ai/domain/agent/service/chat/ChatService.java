@@ -195,23 +195,15 @@ public class ChatService implements IChatService {
             bindTerminalSession(sessionId, terminalSessionId);
             SshExecuteAdkTool.setCurrentTerminalSession(terminalSessionId);
             // ADK Session 状态会随子 Runner 初始上下文传播，避免 ThreadLocal 在异步线程切换后丢失。
-            com.google.adk.sessions.Session session = runner.sessionService()
-                    .getSession(aiAgentRegisterVO.getAppName(), userId, sessionId, Optional.empty())
-                    .blockingGet();
-            if (session != null) {
-                session.state().put("terminalSessionId", terminalSessionId);
-            }
+            SshSessionContextRegistry.bindSession(runner.sessionService(), aiAgentRegisterVO.getAppName(),
+                    userId, sessionId, terminalSessionId);
         } else {
             // 本次请求未显式携带终端会话时，回退到该业务会话的绑定关系
             getTerminalSession(sessionId).ifPresent(value -> {
                 bindTerminalSession(sessionId, value);
                 SshExecuteAdkTool.setCurrentTerminalSession(value);
-                com.google.adk.sessions.Session session = runner.sessionService()
-                        .getSession(aiAgentRegisterVO.getAppName(), userId, sessionId, Optional.empty())
-                        .blockingGet();
-                if (session != null) {
-                    session.state().put("terminalSessionId", value);
-                }
+                SshSessionContextRegistry.bindSession(runner.sessionService(), aiAgentRegisterVO.getAppName(),
+                        userId, sessionId, value);
             });
         }
 

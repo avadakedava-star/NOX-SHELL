@@ -36,6 +36,19 @@ public final class SshSessionContextRegistry {
         }
     }
 
+    /** 每轮调用前同步 ADK Session，重连后必须覆盖旧终端，不能只更新 ThreadLocal。 */
+    public static void bindSession(com.google.adk.sessions.BaseSessionService sessions,
+            String appName, String userId, String sessionId, String terminalSessionId) {
+        if (terminalSessionId == null || terminalSessionId.isBlank()) return;
+        var session = sessions.getSession(appName, userId, sessionId, Optional.empty()).blockingGet();
+        if (session == null) {
+            session = sessions.createSession(appName, userId,
+                    new ConcurrentHashMap<>(Map.of("terminalSessionId", terminalSessionId)), sessionId).blockingGet();
+        }
+        session.state().put("terminalSessionId", terminalSessionId);
+        bind(sessionId, terminalSessionId);
+    }
+
     /**
      * 查询业务会话绑定的 SSH 终端；不存在时返回空 Optional。
      */

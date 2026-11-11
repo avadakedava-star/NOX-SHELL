@@ -1,12 +1,14 @@
 {
-  "name": "walissh-client",
+  "name": "nox-shell-client",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:chat-mode": "node scripts/test-chat-mode.mjs",
     "test:execution-state": "node scripts/test-execution-state.mjs",
+    "test:terminal-binding": "node scripts/test-terminal-binding.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

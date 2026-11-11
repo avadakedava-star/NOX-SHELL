@@ -45,6 +45,72 @@ public class ToolExecutionAuditTest {
     final MemoryRepository repository = new MemoryRepository();
     final ToolExecutionAudit audit = new ToolExecutionAudit(repository);
 
+    @Test public void reconnectRefreshesStaleStateBeforeAsyncToolDispatch() {
+        String session = "reconnect-" + UUID.randomUUID();
+        cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.bind(session, "old-terminal");
+        var state = new HashMap<String, Object>(Map.of("terminalSessionId", "old-terminal"));
+        try (var subscription = audit.subscribe("user", session, ignored -> {})) {
+            assertEquals("old-terminal", audit.context(callback("user", session, state)).terminalSessionId());
+            cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.bind(session, "new-terminal");
+            var builder = request(Map.of("executeCommand", adkTool(ctx -> Single.fromCallable(() -> {
+                assertEquals("new-terminal", ctx.state().get("terminalSessionId"));
+                assertEquals("new-terminal", cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.resolve(ctx));
+                return Map.<String, Object>of("success", true);
+            }).subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io()))));
+            AuditedToolMap.bind(callback("user", session, state), builder, audit);
+            assertEquals(true, builder.build().tools().get("executeCommand").runAsync(Map.of(), null).blockingGet().get("success"));
+            assertEquals("new-terminal", repository.records.values().iterator().next().terminalSessionId());
+        }
+    }
+
+    @Test public void childKeepsExplicitTerminalWhenAnotherBindingExists() {
+        String childSession = "child-" + UUID.randomUUID();
+        cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.bind(childSession, "other-terminal");
+        var state = new HashMap<String, Object>(Map.of("terminalSessionId", "parent-terminal",
+                ToolAuditContext.PARENT_EXECUTION, "parent-execution"));
+        assertEquals("parent-terminal", audit.context(callback("user", childSession, state)).terminalSessionId());
+    }
+
+    @Test public void realSubAgentDispatchReceivesReconnectedTerminal() {
+        String session = "dispatch-reconnect-" + UUID.randomUUID();
+        cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.bind(session, "new-terminal");
+        var child = LlmAgent.builder().name("sshDiagnosisAgent").model("test-model").build();
+        var factory = org.mockito.Mockito.mock(cn.bugstack.ai.domain.agent.service.armory.matter.session.factory.CustomRunnerFactory.class);
+        var childRunner = new com.google.adk.runner.Runner(null, "test", null, null, null, List.of()) {
+            @Override public io.reactivex.rxjava3.core.Flowable<com.google.adk.events.Event> runAsync(
+                    String user, String id, Content message, RunConfig config, Map<String, Object> state) {
+                return io.reactivex.rxjava3.core.Flowable.fromCallable(() -> {
+                    assertEquals("new-terminal", state.get("terminalSessionId"));
+                    assertEquals(session, state.get(ToolAuditContext.ROOT_SESSION));
+                    return com.google.adk.events.Event.builder().id("child-result").invocationId("child-inv")
+                            .author("sshDiagnosisAgent").content(Content.fromParts(Part.fromText("connected"))).build();
+                }).subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io());
+            }
+        };
+        org.mockito.Mockito.when(factory.create(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyList())).thenReturn(childRunner);
+        var dispatch = new cn.bugstack.ai.domain.agent.service.armory.matter.tools.SubAgentDispatchTool(child, factory);
+        try (var subscription = audit.subscribe("user", session, ignored -> {})) {
+            var builder = request(Map.of(dispatch.name(), dispatch));
+            AuditedToolMap.bind(callback("user", session, new HashMap<>(Map.of("terminalSessionId", "old-terminal"))), builder, audit);
+            var result = builder.build().tools().get(dispatch.name()).runAsync(Map.of("request", "check connection"), null).blockingGet();
+            assertEquals(true, result.get("success"));
+        } finally {
+            cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshExecuteAdkTool.clearCurrentTerminalSession();
+        }
+    }
+
+    @Test public void reconnectDoesNotChangeAnotherChatsTerminal() {
+        String first = "first-" + UUID.randomUUID(), second = "second-" + UUID.randomUUID();
+        cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.bind(first, "new-first");
+        cn.bugstack.ai.domain.agent.service.armory.matter.tools.SshSessionContextRegistry.bind(second, "second-terminal");
+        try (var one = audit.subscribe("user", first, ignored -> {});
+             var two = audit.subscribe("user", second, ignored -> {})) {
+            assertEquals("new-first", audit.context(callback("user", first, new HashMap<>(Map.of("terminalSessionId", "old-first")))).terminalSessionId());
+            assertEquals("second-terminal", audit.context(callback("user", second, new HashMap<>(Map.of("terminalSessionId", "second-terminal")))).terminalSessionId());
+        }
+    }
+
     private CallbackContext callback(String user, String session, Map<String, Object> state) {
         var agent = LlmAgent.builder().name("testAgent").model("test-model").build();
         var invocation = InvocationContext.builder().agent(agent).invocationId("inv-" + UUID.randomUUID())
@@ -153,8 +219,9 @@ public class ToolExecutionAuditTest {
         AuditedToolMap.bind(callback("user", "session", new HashMap<>()), builder, audit);
         Prompt prompt = new MyMessageConverter(new ObjectMapper(), List.of(callbackTool("mcp", args -> "ok"))).toLlmPrompt(builder.build());
         var callbacks = ((ToolCallingChatOptions) prompt.getOptions()).getToolCallbacks();
-        assertEquals(2, callbacks.size());
-        callbacks.forEach(tool -> tool.call("{}"));
+        assertEquals(3, callbacks.size());
+        assertTrue(callbacks.stream().anyMatch(tool->tool.getToolDefinition().name().equals("reportProgress")));
+        callbacks.stream().filter(tool->!tool.getToolDefinition().name().equals("reportProgress")).forEach(tool -> tool.call("{}"));
         assertEquals(2, repository.records.size());
         assertEquals(4, repository.writes.size());
     }
@@ -426,11 +493,11 @@ public class ToolExecutionAuditTest {
         new MySpringAI(model,"test-model").generateContent(builder.build(),false).toList().blockingGet();
     }
 
-    @Test public void actualInternalLoopStopsAfterFiveDistinctFailures() {
+    @Test public void actualInternalLoopPausesOnRepeatedEvidenceDespiteDifferentArguments() {
         var api=new RepeatingApi("read",true,Integer.MAX_VALUE);AtomicInteger executions=new AtomicInteger();
         var error=assertThrows(RuntimeException.class,()->runGuardedLoop(audit,api,callbackTool("read",args->{executions.incrementAndGet();return "{\"success\":false}";})));
-        assertEquals("CONSECUTIVE_FAILURE_LIMIT",cn.bugstack.ai.domain.agent.service.execution.ExecutionHaltedException.find(error).reason());
-        assertEquals(5,executions.get());assertEquals(5,api.httpCalls.get());
+        assertEquals("PROGRESS_STALLED",cn.bugstack.ai.domain.agent.service.execution.ExecutionHaltedException.find(error).reason());
+        assertEquals(9,executions.get());assertEquals(9,api.httpCalls.get());
     }
 
     @Test public void actualInternalLoopDoesNotExecuteSameFailedToolFourthTime() {
@@ -442,7 +509,7 @@ public class ToolExecutionAuditTest {
 
     @Test public void actualInternalLoopCanCompleteFortySuccessfulToolRounds() {
         var api=new RepeatingApi("read",true,41);AtomicInteger executions=new AtomicInteger();
-        runGuardedLoop(audit,api,callbackTool("read",args->{executions.incrementAndGet();return "ok";}));
+        runGuardedLoop(audit,api,callbackTool("read",args->{executions.incrementAndGet();return args;}));
         assertEquals(40,executions.get());assertEquals(41,api.httpCalls.get());
         assertEquals(40,repository.records.size());
         assertTrue(repository.records.values().stream().allMatch(r->r.status().equals("RETURNED")));
@@ -471,7 +538,7 @@ public class ToolExecutionAuditTest {
         assertTrue(parentContext.guard().summary().contains("连续失败 1 次"));
     }
 
-    @Test public void streamingInternalLoopStopsAfterFiveFailuresToo() {
+    @Test public void streamingInternalLoopAlsoDetectsRepeatedEvidence() {
         AtomicInteger apiCalls=new AtomicInteger();
         var api=new FakeApi(()->{}) {
             @Override public reactor.core.publisher.Flux<ChatCompletionChunk> chatCompletionStream(ChatCompletionRequest request,MultiValueMap<String,String> headers) {
@@ -485,7 +552,7 @@ public class ToolExecutionAuditTest {
                 .defaultOptions(OpenAiChatOptions.builder().model("test-model").toolCallbacks(List.of(callbackTool("read",args->"{\"success\":false}"))).build()).build();
         var builder=request(Map.of());AuditedToolMap.bind(callback("user","stream-session",new HashMap<>()),builder,audit);
         var error=assertThrows(RuntimeException.class,()->new MySpringAI(model,model,"test-model").generateContent(builder.build(),true).toList().blockingGet());
-        assertEquals("CONSECUTIVE_FAILURE_LIMIT",cn.bugstack.ai.domain.agent.service.execution.ExecutionHaltedException.find(error).reason());assertEquals(5,apiCalls.get());
+        assertEquals("PROGRESS_STALLED",cn.bugstack.ai.domain.agent.service.execution.ExecutionHaltedException.find(error).reason());assertEquals(9,apiCalls.get());
     }
 
     @Test public void requestDeadlineEndsHangingModelStreamWithoutExecutingTools() {
@@ -497,7 +564,7 @@ public class ToolExecutionAuditTest {
                 .defaultOptions(OpenAiChatOptions.builder().model("test-model").build()).build();
         var builder=request(Map.of());AuditedToolMap.bind(callback("user","timeout-session",new HashMap<>()),builder,limited);
         var error=assertThrows(RuntimeException.class,()->new MySpringAI(model,model,"test-model").generateContent(builder.build(),true).toList().blockingGet());
-        assertEquals("REQUEST_TIMEOUT",cn.bugstack.ai.domain.agent.service.execution.ExecutionHaltedException.find(error).reason());assertTrue(repository.records.isEmpty());
+        assertEquals("PROGRESS_REVIEW_REQUIRED",cn.bugstack.ai.domain.agent.service.execution.ExecutionHaltedException.find(error).reason());assertTrue(repository.records.isEmpty());
     }
 
     @Test public void reconnectingSameServerDoesNotResetSameCommandFailures() throws Exception {

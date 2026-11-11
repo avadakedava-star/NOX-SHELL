@@ -104,8 +104,8 @@ public class TerminalStateProvider implements ContextProvider {
 
     private String safeExec(String terminalSessionId, String cmd) {
         try {
-            String res = sshTerminalService.executeCommand(terminalSessionId, cmd);
-            return res != null ? res.trim() : "";
+            var result = sshTerminalService.executeStructured(terminalSessionId, cmd, 3000);
+            return result != null && "SUCCEEDED".equals(result.status()) ? result.stdout().trim() : "";
         } catch (Exception e) {
             return "";
         }

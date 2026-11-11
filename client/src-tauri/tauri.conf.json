@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "WaLiSSH",
+  "productName": "NOX-SHELL",
   "version": "0.1.0",
   "identifier": "cn.bugstack.ai",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "WaLiSSH",
+        "title": "NOX-SHELL",
         "width": 1280,
         "height": 800,
         "minWidth": 900,

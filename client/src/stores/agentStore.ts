@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import * as agentApi from '../api/agent'
 import { playCompleteSound, playErrorSound } from '../utils/sound'
+import { useConnectionStore } from './connectionStore'
+import { ConnectionStatus } from '../types'
 import type { SSEEvent } from '../api/agent'
 import type {
   AgentConfig,
@@ -46,7 +48,7 @@ interface AgentStore {
 }
 
 const DEFAULT_USER_ID = 'walissh-user'
-const DEFAULT_LOADING_TEXT = 'WaLiSSH 正在思考...'
+const DEFAULT_LOADING_TEXT = 'NOX-SHELL 正在思考...'
 const DEFAULT_TRACE_STATUS = '请求已发送，正在启动流式响应...'
 const MAX_TIMELINE_ENTRIES = 24
 const AGENT_POLL_INITIAL_MS = 2000
@@ -316,6 +318,10 @@ function appendTimeline(trace: AgentRunTrace, event: SSEEvent): AgentTimelineEnt
 
 export function applyTraceEvent(trace: AgentRunTrace, event: SSEEvent): AgentRunTrace {
   if (event.event === 'run_finished') {
+    if(event.status==='paused') {
+      const paused=applyTraceEvent(trace,{...event,event:'done'})
+      return {...paused,stage:'paused',statusText:'已暂停，等待核查',error:undefined}
+    }
     const failed = event.status === 'failed'
     return applyTraceEvent(trace, { ...event, event: failed ? 'error' : 'done' })
   }
@@ -652,7 +658,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       for (const session of data.sessions) {
         // 跳过流式输出未完成的消息标记
         const messages = session.messages.map((msg) => {
-          if (msg.role === 'assistant' && msg.trace && !['completed', 'error', 'stopped', 'waiting_approval'].includes(msg.trace.stage)) {
+          if (msg.role === 'assistant' && msg.trace && !['completed', 'error', 'stopped', 'paused', 'waiting_approval'].includes(msg.trace.stage)) {
             return { ...msg, trace: { ...msg.trace, stage: 'stopped' as const, statusText: msg.trace.statusText || '已中断' } }
           }
           return msg
@@ -721,6 +727,13 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     const state = get()
     const sessionId = state.currentSessionId
     const agentId = state.currentAgentId
+    // 在本轮开始时绑定目标，避免等待创建聊天会话期间切换服务器后串到另一台机器。
+    // undefined 表示调用方省略参数，统一从已连接的当前终端兜底；null 明确表示纯聊天。
+    const connectionState = useConnectionStore.getState()
+    const currentConnection = connectionState.connections.find(connection => connection.id === connectionState.currentConnectionId)
+    const targetTerminalSessionId = terminalSessionId === undefined
+      ? (currentConnection?.status === ConnectionStatus.CONNECTED ? connectionState.getCurrentTerminalSession() : null)
+      : terminalSessionId
 
     if (!sessionId) {
       throw new Error('当前没有活跃会话')
@@ -741,7 +754,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       }
     })
 
-    get().setLoading(true, '已发送，等待 WaLiSSH 响应...')
+    get().setLoading(true, '已发送，等待 NOX-SHELL 响应...')
 
     let controller: AbortController | null = null
     let hadError = false
@@ -769,7 +782,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           userId: DEFAULT_USER_ID,
           sessionId: backendSessionId,
           message: content,
-          terminalSessionId: terminalSessionId || undefined,
+          terminalSessionId: targetTerminalSessionId || undefined,
         },
         (event) => {
           let nextLoadingText = DEFAULT_LOADING_TEXT

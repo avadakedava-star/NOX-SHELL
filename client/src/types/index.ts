@@ -28,6 +28,7 @@ export type AgentRunStage =
   | 'completed'
   | 'error'
   | 'stopped'
+  | 'paused'
   | 'waiting_approval'
 
 export type AgentToolStatus = 'pending' | 'running' | 'success' | 'error' | 'blocked' | 'unknown'

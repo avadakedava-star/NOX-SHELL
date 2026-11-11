@@ -68,6 +68,17 @@ public class SubAgentDispatchServiceTest {
     private void registerAgent(String name, BaseAgent agent) {
         agentCatalog.register("parent-agent", Map.of(name, agent));
     }
+    @Test public void taskCanFinishBeyondLegacyTimeoutWithoutBeingReplayed() {
+        registerAgent("sshAgent",fakeAgent("sshAgent"));
+        AtomicInteger calls=new AtomicInteger();
+        when(runnerFactory.create(any(),anyString(),anyList())).thenReturn(behaviorRunner(()->{
+            calls.incrementAndGet();
+            return Flowable.timer(1500,java.util.concurrent.TimeUnit.MILLISECONDS).map(n->Event.builder()
+                    .id("done").invocationId("inv").author("sshAgent").content(Content.fromParts(Part.fromText("done"))).build());
+        }));
+        var task=DynamicTask.builder().taskId("observation").agentName("sshAgent").request("检查状态").timeoutSeconds(1).build();
+        dispatchService.execute(context,task);assertEquals(TaskStatus.COMPLETED,task.getStatus());assertEquals(1,calls.get());
+    }
 
     /** 构造一个总是成功的假 Runner（返回固定文本事件） */
     private Runner successRunner(String reply) {

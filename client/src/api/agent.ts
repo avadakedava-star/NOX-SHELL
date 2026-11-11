@@ -9,6 +9,18 @@ import type { AgentRunStage } from '../types'
 
 const BASE = '/api/v1'
 
+export type ChatExecutionMode = 'standard' | 'enhanced'
+const CHAT_MODE_KEY = 'nox_shell_chat_execution_mode'
+
+export function getChatExecutionMode(): ChatExecutionMode {
+  try { return localStorage.getItem(CHAT_MODE_KEY) === 'enhanced' ? 'enhanced' : 'standard' }
+  catch { return 'standard' }
+}
+
+export function setChatExecutionMode(mode: ChatExecutionMode): void {
+  localStorage.setItem(CHAT_MODE_KEY, mode)
+}
+
 /** 创建会话响应 */
 export interface CreateSessionResponse {
   sessionId: string
@@ -21,6 +33,7 @@ export interface ChatStreamPayload {
   sessionId?: string
   message: string
   terminalSessionId?: string
+  executionMode?: ChatExecutionMode
 }
 
 /** 查询智能体配置列表 */
@@ -230,7 +243,7 @@ export async function chatStream(
         Accept: 'text/event-stream, application/json',
         'Cache-Control': 'no-cache',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, executionMode: payload.executionMode ?? getChatExecutionMode() }),
       signal: controller.signal,
     })
   } catch (err: any) {

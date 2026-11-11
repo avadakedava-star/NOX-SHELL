@@ -156,15 +156,8 @@ public class MySpringAI extends BaseLlm {
                 guard.checkActive();
                 return generateUnchecked(llmRequest, stream);
             }).subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io())
-                    .timeout(guard.remainingMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
-                    .doOnError(error -> {
-                        if (error instanceof java.util.concurrent.TimeoutException)
-                            guard.halt("REQUEST_TIMEOUT", "请求超时，后续自动操作已停止；已发出的命令需核查结果");
-                    }).onErrorResumeNext(error -> {
-                        if (error instanceof java.util.concurrent.TimeoutException)
-                            return Flowable.error(new cn.bugstack.ai.domain.agent.service.execution.ExecutionHaltedException("REQUEST_TIMEOUT", guard.summary()));
-                        return Flowable.error(error);
-                    });
+                    .takeUntil(Flowable.interval(1,java.util.concurrent.TimeUnit.SECONDS)
+                            .map(tick->{guard.checkActive();return tick;}).filter(tick->false));
         }
         return generateUnchecked(llmRequest, stream);
     }
@@ -390,5 +383,5 @@ public class MySpringAI extends BaseLlm {
         }
         return "";
     }
-    
+
 }
