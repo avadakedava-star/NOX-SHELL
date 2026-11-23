@@ -213,6 +213,9 @@ function ResultSummary({ trace }: { trace: AgentRunTrace }) {
     : 'idle'
 
   const headline = (() => {
+    if (trace.stopReason === 'approval_submitted') return '后台任务已提交'
+    if (trace.stopReason === 'approval_succeeded') return '获批操作已执行'
+    if (trace.stopReason === 'approval_rejected') return '已拒绝，操作未执行'
     if (trace.stage === 'waiting_approval') return '变更已生成，等待你的确认'
     if (trace.stage === 'paused') return '任务已暂停，需要核查后再继续'
     if (trace.stage === 'error') return '本轮未能完成'
@@ -223,6 +226,8 @@ function ResultSummary({ trace }: { trace: AgentRunTrace }) {
   })()
 
   const nextStep = (() => {
+    if (trace.stopReason === 'approval_submitted') return '在后台任务面板查看进度和最终结果。'
+    if (trace.stopReason === 'approval_succeeded') return '任务是否完成，以后续核验结果为准。'
     if (trace.stage === 'waiting_approval') return '在下方确认卡中批准或拒绝，批准后只会执行一次。'
     if (trace.stage === 'paused') return '先核对服务器上的实际状态，再重新发起任务。'
     if (trace.stage === 'error') return '根据失败原因调整命令或权限后重试。'
@@ -305,6 +310,10 @@ export function AgentRun({ trace, goal }: AgentRunProps) {
   const finished = TERMINAL_STAGES.includes(trace.stage) && trace.stage !== 'waiting_approval'
   const [collapsed, setCollapsed] = useState(finished)
   const stage = STAGE_META[trace.stage]
+  const stageLabel = trace.stopReason === 'approval_submitted' ? '已提交'
+    : trace.stopReason === 'approval_succeeded' ? '已执行'
+    : trace.stopReason === 'approval_rejected' ? '已拒绝'
+    : stage.label
   const streaming = !finished && trace.stage !== 'waiting_approval'
 
   // 运行中与等待确认时保持展开；结束后折叠一次，让最终回答成为主角
@@ -334,7 +343,7 @@ export function AgentRun({ trace, goal }: AgentRunProps) {
             {goal || '当前任务'}
           </span>
           <span className="agent-run-sub">
-            <span className="agent-stage-pill" data-tone={stage.tone}>{stage.label}</span>
+            <span className="agent-stage-pill" data-tone={stage.tone}>{stageLabel}</span>
             {stepTotal > 0 && <span><span className="u-num">{trace.steps.length}/{stepTotal}</span> 步</span>}
             {stepTotal > 0 && <span className="sep" />}
             <span><span className="u-num">{trace.tools.length}</span> 工具</span>

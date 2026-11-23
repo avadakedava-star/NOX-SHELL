@@ -35,6 +35,11 @@ public class ToolExecutionAudit {
 
     /** 同一会话一次只运行一个请求，避免消息历史及运行状态相互覆盖。不同会话仍可并发。 */
     public Subscription subscribe(String userId, String sessionId, Consumer<Notification> listener) {
+        return subscribe(userId, sessionId, AgentPermissionMode.APPROVAL, listener);
+    }
+
+    public Subscription subscribe(String userId, String sessionId, AgentPermissionMode permissionMode,
+                                  Consumer<Notification> listener) {
         guards.entrySet().removeIf(entry -> entry.getValue().deadline() + 60000 < System.currentTimeMillis());
         if (guards.size() >= 10000) throw new ExecutionHaltedException("SERVER_BUSY", "执行请求容量已满，请稍后重试");
         SessionKey key = new SessionKey(userId, sessionId);
@@ -42,7 +47,8 @@ public class ToolExecutionAudit {
         if (subscriptions.putIfAbsent(key, subscription) != null) {
             throw new IllegalStateException("该会话已有运行中的请求，请等待完成或新建会话");
         }
-        guards.put(subscription.requestId, new RequestExecutionGuard(policy, System.currentTimeMillis() + policy.requestTimeoutSeconds() * 1000L));
+        guards.put(subscription.requestId, new RequestExecutionGuard(policy, System.currentTimeMillis() + policy.requestTimeoutSeconds() * 1000L,
+                System::currentTimeMillis, permissionMode));
         return subscription;
     }
 
@@ -98,6 +104,29 @@ public class ToolExecutionAudit {
         return new ToolAuditContext(requestId, userId, sessionId, callback.invocationId(), callback.agentName(),
                 string(state.get("terminalSessionId"), null), child ? string(state.get(ToolAuditContext.PARENT_EXECUTION), null) : null,
                 callback.invocationContext(), guard);
+    }
+
+    public Map<String, Object> requestApproval(ToolAuditContext context, String kind, String command,
+                                               String execution, String path, String expected, String content) {
+        if (commandApprovals == null) throw new IllegalStateException("审批服务未就绪，操作未发送");
+        synchronized (context.guard()) {
+            context.guard().checkActive();
+            var approval = commandApprovals.create(context, kind, command, execution, path, expected, content);
+            context.guard().halt("WAITING_APPROVAL", "变更方案已保存，等待用户确认");
+            return Map.of("success", false, "executionStatus", "WAITING_APPROVAL",
+                    "approvalId", approval.id(), "commandDispatched", false, "output", "等待你确认变更");
+        }
+    }
+
+    public ToolAuditContext toolContext(com.google.adk.tools.ToolContext context) {
+        var requestGuard = guard(context);
+        if (requestGuard == null) throw new IllegalArgumentException("请求执行上下文已失效");
+        requestGuard.checkActive();
+        var state = context.state();
+        return new ToolAuditContext(String.valueOf(state.get(ToolAuditContext.ROOT_REQUEST)),
+                String.valueOf(state.get(ToolAuditContext.ROOT_USER)), String.valueOf(state.get(ToolAuditContext.ROOT_SESSION)),
+                context.invocationId(), "SSH", (String) state.get("terminalSessionId"),
+                context.functionCallId().orElse(null), context.invocationContext(), requestGuard);
     }
 
     public ToolExecutionRecord started(ToolAuditContext context, String toolName, Object arguments) {

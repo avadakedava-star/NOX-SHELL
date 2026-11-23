@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAgentStore } from '../../stores/agentStore'
 import { Icon } from '../Icon'
+import { getAgentPermissionMode, setAgentPermissionMode, type AgentPermissionMode } from '../../api/agent'
 
 interface ComposerProps {
   /** 终端连接状态的可读描述 */
@@ -25,6 +26,7 @@ export function Composer({ contextTone, contextText, contextAction, disabled, re
   const menuRef = useRef<HTMLDivElement>(null)
   const [focused, setFocused] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [permissionMode, setPermissionMode] = useState(getAgentPermissionMode)
 
   const currentAgent = agents.find(agent => agent.agentId === currentAgentId)
   const canSend = Boolean(inputText.trim() && currentSession && !isLoading && currentAgentId && !disabled)
@@ -121,6 +123,21 @@ export function Composer({ contextTone, contextText, contextAction, disabled, re
               )}
             </div>
 
+            <select
+              className="nox-agent-picker nox-permission-picker"
+              aria-label="Agent 执行权限"
+              title="权限切换从下一条消息开始生效"
+              value={permissionMode}
+              onChange={event => {
+                const mode = event.target.value as AgentPermissionMode
+                setPermissionMode(mode)
+                setAgentPermissionMode(mode)
+              }}
+            >
+              <option value="approval">默认权限 · 变更需审批</option>
+              <option value="direct">高权限 · 直接执行</option>
+            </select>
+
             <span className="grow" />
 
             {isLoading ? (
@@ -142,7 +159,7 @@ export function Composer({ contextTone, contextText, contextAction, disabled, re
         </div>
 
         <div className="nox-composer-hint">
-          <span>{focused ? 'Enter 发送 · Shift+Enter 换行 · Esc 停止' : 'NOX AI 会在执行前规划步骤，修改类操作需要你确认'}</span>
+          <span>{focused ? 'Enter 发送 · Shift+Enter 换行 · Esc 停止' : permissionMode === 'approval' ? '只读查询直接执行，变更需要确认' : '高权限下，允许的操作会直接执行'}</span>
           <span className="u-mono">{inputText.length > 0 ? `${inputText.length} 字` : ''}</span>
         </div>
       </div>

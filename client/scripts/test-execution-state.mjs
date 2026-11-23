@@ -51,6 +51,7 @@ assert.equal(trace.error,undefined)
 assert.equal(trace.tools[0].status,'pending')
 assert.equal(applyApprovalResult(trace,'approval-1','REJECTED').stage,'stopped')
 assert.equal(applyApprovalResult(trace,'approval-1','SUCCEEDED').stage,'completed')
+assert.equal(applyApprovalResult(trace,'approval-1','SUCCEEDED','BACKGROUND_COMMAND').stopReason,'approval_submitted')
 assert.equal(applyApprovalResult(trace,'approval-1','UNKNOWN').stage,'error')
 assert.equal(applyApprovalResult(trace,'other','SUCCEEDED').stage,'waiting_approval')
 const store=module.exports.useAgentStore

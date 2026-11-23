@@ -4,7 +4,7 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.regex.Pattern;
 
-/** 删除/磁盘破坏黑名单。其它命令保留原始 Shell 语义，不再使用查询白名单或审批。 */
+/** 高权限沿用危险操作拦截，默认权限额外区分只读查询和需审批的变更。 */
 @Service
 public class CommandPolicyService {
     private static final Set<String> DELETE = Set.of("rm", "rm-rf", "rmdir", "unlink", "shred", "srm", "del", "erase", "remove-item", "rd");
@@ -21,11 +21,140 @@ public class CommandPolicyService {
         return new CommandPolicyDecision("ALLOW", "C000", "未命中危险操作黑名单，直接执行", readOnly(command), command);
     }
 
+    public CommandPolicyDecision withApproval(String command) {
+        var decision = check(command);
+        if (!decision.allowed()) return decision;
+
+        ShellCommandAnalyzer.Chain chain;
+        try {
+            chain = new ShellCommandAnalyzer().analyzeQueryChain(command);
+        } catch (IllegalArgumentException error) {
+            return CommandPolicyDecision.rewrite("C010", "默认权限无法确认这段 Shell 的影响：" + error.getMessage()
+                    + "。请拆成明确的查询或单独提交必要的变更");
+        }
+        var commands = chain.commands();
+        boolean configTest = commands.stream().anyMatch(this::isNginxConfigTest);
+        if (configTest && commands.size() > 1) {
+            return CommandPolicyDecision.rewrite("C010", "nginx -t 会尝试打开配置引用的文件。"
+                    + "请先单独查询安装、服务、日志或端口；原任务明确要求配置校验时，再单独提交 nginx -t");
+        }
+        if (commands.stream().anyMatch(words -> !isReadOnlyQuery(words) && !isKnownChange(words) && !isNginxConfigTest(words))) {
+            return CommandPolicyDecision.rewrite("C010", "默认权限无法确认这段命令的用途。"
+                    + "请改用明确的只读查询，或将已知软件安装、容器启停等变更单独提交");
+        }
+        if (!configTest && !chain.writesFile() && commands.stream().allMatch(this::isReadOnlyQuery)) return decision;
+        return new CommandPolicyDecision("REQUIRE_APPROVAL", "C006", configTest
+                ? "nginx -t 会尝试打开配置引用的文件，请确认是否需要执行配置校验"
+                : "此操作将进行变更或下载，请批准后执行", false, command);
+    }
+
+    private static final Set<String> QUERY_PROGRAMS = Set.of(
+            "pwd", "whoami", "id", "uname", "uptime", "df", "free", "ls", "cat", "head",
+            "tail", "wc", "stat", "nproc", "ps", "pgrep", "grep", "echo", "printf", "true", "false");
+    private static final Set<String> SYSTEMCTL_QUERIES = Set.of(
+            "status", "show", "is-active", "is-enabled", "is-system-running",
+            "list-units", "list-unit-files", "list-timers", "list-sockets");
+    private static final Set<String> DOCKER_QUERIES = Set.of("ps", "inspect", "logs", "images", "stats", "version", "info");
+
     private boolean readOnly(String command) {
         try {
             return new ShellCommandAnalyzer().analyzeChain(command).commands().stream().allMatch(words ->
-                    Set.of("pwd", "whoami", "id", "uname", "uptime", "df", "free", "ls", "cat", "head", "tail", "wc", "stat", "nproc").contains(base(words.get(0))));
+                    Set.of("pwd", "whoami", "id", "uname", "uptime", "df", "free", "ls", "cat",
+                            "head", "tail", "wc", "stat", "nproc").contains(base(words.get(0))));
         } catch (IllegalArgumentException ignored) { return false; }
+    }
+
+    private static final Set<String> PACKAGE_TOOLS = Set.of("apt", "apt-get", "dnf", "yum", "apk", "zypper", "pacman");
+    private static final Set<String> PACKAGE_CHANGES = Set.of("update", "install", "upgrade", "remove", "purge", "reinstall",
+            "download", "add", "del", "dist-upgrade", "full-upgrade", "-S", "-Sy", "-Syu");
+    private static final Set<String> SERVICE_CHANGES = Set.of("start", "stop", "restart", "reload", "reload-or-restart",
+            "enable", "disable", "mask", "unmask", "daemon-reload");
+    private static final Set<String> DOCKER_CHANGES = Set.of("start", "stop", "restart", "run", "create", "pull", "build",
+            "load", "save", "push", "up", "down", "pause", "unpause", "update");
+    private static final Set<String> FILE_CHANGES = Set.of("mkdir", "touch", "cp", "mv", "ln", "tee", "chmod", "chown", "chgrp", "install");
+
+    private List<String> withoutNonInteractiveSudo(List<String> words) {
+        int start = 0;
+        if (words.size() > 2 && words.get(0).equals("sudo") && words.get(1).equals("-n")) {
+            start = 2;
+            if (words.get(start).equals("--")) start++;
+            if (start < words.size() && words.get(start).equals("DEBIAN_FRONTEND=noninteractive")) start++;
+        }
+        return words.subList(start, words.size());
+    }
+
+    private boolean isNginxConfigTest(List<String> words) {
+        var command = withoutNonInteractiveSudo(words);
+        return command.equals(List.of("nginx", "-t"))
+                || command.equals(List.of("nginx", "-t", "-q")) || command.equals(List.of("nginx", "-q", "-t"));
+    }
+
+    private boolean isKnownChange(List<String> words) {
+        var command = withoutNonInteractiveSudo(words);
+        if (command.isEmpty()) return false;
+        String program = command.get(0);
+        if (FILE_CHANGES.contains(program) || Set.of("curl", "wget").contains(program)) return true;
+        if (program.equals("nginx"))
+            return command.size() == 1 || command.size() == 3 && command.get(1).equals("-s")
+                    && Set.of("reload", "stop", "quit", "reopen").contains(command.get(2));
+        if (command.size() < 2) return false;
+        String operation = command.get(1);
+        if (PACKAGE_TOOLS.contains(program))
+            return command.subList(1, command.size()).stream().filter(arg -> !arg.equals("-y") && !arg.equals("--yes"))
+                    .findFirst().filter(PACKAGE_CHANGES::contains).isPresent();
+        if (program.equals("dpkg")) return Set.of("-i", "--install", "-r", "--remove", "--configure").contains(operation);
+        if (program.equals("systemctl"))
+            return SERVICE_CHANGES.contains(operation) || operation.equals("--no-pager") && command.size() > 2
+                    && SERVICE_CHANGES.contains(command.get(2));
+        if (program.equals("docker"))
+            return DOCKER_CHANGES.contains(operation) || Set.of("container", "image", "compose").contains(operation)
+                    && command.size() > 2 && DOCKER_CHANGES.contains(command.get(2));
+        return false;
+    }
+
+    private boolean journalQuery(List<String> words) {
+        for (int index = 1; index < words.size(); index++) {
+            String option = words.get(index);
+            if (Set.of("--no-pager", "--quiet", "-q", "--reverse", "-r").contains(option)) continue;
+            if (option.matches("(?:--lines=|-n)[0-9]+") || option.matches("--unit=[A-Za-z0-9_][A-Za-z0-9_.@:-]*")) continue;
+            if (++index >= words.size()) return false;
+            String argument = words.get(index);
+            if (Set.of("-n", "--lines").contains(option) && argument.matches("[0-9]+")) continue;
+            if (Set.of("-u", "--unit").contains(option) && argument.matches("[A-Za-z0-9_][A-Za-z0-9_.@:-]*")) continue;
+            if (Set.of("--since", "--until", "-S", "-U").contains(option) && !argument.startsWith("-")) continue;
+            return false;
+        }
+        return true;
+    }
+
+    private boolean isReadOnlyQuery(List<String> words) {
+        String program = words.get(0);
+        if (QUERY_PROGRAMS.contains(program)) return true;
+        if (program.equals("journalctl")) return journalQuery(words);
+        if (words.size() < 2) return false;
+        if (program.equals("which")) {
+            int start = words.get(1).equals("-a") ? 2 : 1;
+            return words.size() > start && words.subList(start, words.size()).stream()
+                    .allMatch(path -> path.matches("[A-Za-z0-9_./][A-Za-z0-9_./+-]*"));
+        }
+        if (program.equals("nginx")) return words.size() == 2 && Set.of("-v", "-V").contains(words.get(1));
+        if (program.equals("sudo")) return words.equals(List.of("sudo", "-n", "true"));
+        if (program.equals("command"))
+            return words.size() >= 3 && Set.of("-v", "-V").contains(words.get(1))
+                    && words.subList(2, words.size()).stream().allMatch(arg -> arg.matches("[A-Za-z0-9_./][A-Za-z0-9_./+-]*"));
+        if (program.equals("dpkg") || program.equals("dpkg-query"))
+            return Set.of("-l", "--list", "-s", "--status", "-L", "--listfiles").contains(words.get(1))
+                    && words.subList(2, words.size()).stream().allMatch(arg -> arg.matches("[A-Za-z0-9][A-Za-z0-9+.:_-]*"));
+        if (program.equals("ss"))
+            return words.subList(1, words.size()).stream().allMatch(arg -> arg.matches("-[atunlpHO4s6]+"));
+        int optionIndex = program.equals("systemctl") && words.get(1).equals("--no-pager") ? 2 : 1;
+        if (words.size() <= optionIndex) return false;
+        String operation = words.get(optionIndex);
+        return (program.equals("systemctl") && SYSTEMCTL_QUERIES.contains(operation)
+                || program.equals("docker") && DOCKER_QUERIES.contains(operation))
+                && words.subList(optionIndex + 1, words.size()).stream().noneMatch(
+                        arg -> arg.equals("--kill") || arg.startsWith("--host") || arg.startsWith("--root")
+                                || arg.startsWith("--context") || arg.startsWith("--machine"));
     }
 
     private String inspect(String text, int depth) {

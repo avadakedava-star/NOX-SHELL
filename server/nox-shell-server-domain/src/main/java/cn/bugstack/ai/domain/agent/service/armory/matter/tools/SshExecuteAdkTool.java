@@ -130,7 +130,7 @@ public class SshExecuteAdkTool {
      * </pre>
      */
     public Map<String, Object> executeCommand(
-            @Schema(name = "command", description = "除删除、清理数据、磁盘破坏等黑名单操作外，所有命令直接执行，无需审批。支持 sudo、安装、重启、脚本、管道、重定向、多行命令。需要管理员权限时使用 sudo -n。退出码由工具返回。单条命令默认总时限30秒，包含sleep和排队；不要sleep 30后再检查。等待启动应分成短时间检查，首次超时先核查，不重建已创建资源。")
+            @Schema(name = "command", description = "只读查询直接执行。默认权限下已知变更先审批，识别不了的写法要拆分或改写。查安装、版本、服务、日志或端口时，不要把 nginx -t 或写操作混进查询；用户明确要求配置校验时单独提交 nginx -t。高权限沿用现有命令限制。支持 sudo、安装、重启、脚本、管道、重定向、多行命令。需要管理员权限时使用 sudo -n。退出码由工具返回。单条命令默认总时限30秒，包含sleep和排队；不要sleep 30后再检查。等待启动应分成短时间检查，首次超时先核查，不重建已创建资源。")
             String command,
             @Schema(name = "toolContext", optional = true)
             ToolContext toolContext) {
@@ -141,17 +141,10 @@ public class SshExecuteAdkTool {
                 ? new cn.bugstack.ai.domain.ssh.service.policy.CommandPolicyService() : commandPolicyService;
         var guard = toolExecutionAudit == null ? null : toolExecutionAudit.guard(toolContext);
         if (guard != null) guard.checkActive();
-        var decision = commandPolicy.check(command);
-        if (!decision.allowed()) {
-            Map<String, Object> blocked = new java.util.LinkedHashMap<>();
-            blocked.put("success", false); blocked.put("executionStatus", "BLOCKED");
-            blocked.put("command", command); blocked.put("commandDispatched", false);
-            blocked.put("retryable", false); blocked.put("ruleId", decision.ruleId());
-            blocked.put("policyDecision", decision.decision()); blocked.put("failureType", decision.recoverable() ? "POLICY_REWRITE_REQUIRED" : "POLICY_BLOCKED");
-            blocked.put("rewriteAllowed", decision.recoverable());
-            blocked.put("output", decision.reason());
-            return blocked;
-        }
+        var decision = guard != null && guard.requiresApproval()
+                ? commandPolicy.withApproval(command) : commandPolicy.check(command);
+        boolean requiresConfirmation = "REQUIRE_APPROVAL".equals(decision.decision());
+        if (!decision.allowed() && !requiresConfirmation) return decision.blockedToolResult(command);
         String terminalSessionId = toolContext == null ? currentTerminalSession.get()
                 : toolContext.state().get("terminalSessionId") instanceof String value ? value : null;
         if (terminalSessionId == null || terminalSessionId.isBlank()) {
@@ -159,6 +152,9 @@ public class SshExecuteAdkTool {
             result.put("output", "未绑定 SSH 终端会话，请先建立连接");
             return result;
         }
+        if (requiresConfirmation)
+            return toolExecutionAudit.requestApproval(toolExecutionAudit.toolContext(toolContext),
+                    "COMMAND", command, decision.executionCommand(), null, null, null);
         String toolInvocationId = "tool-" + UUID.randomUUID();
         publishToolEvent(toolContext, terminalSessionId, toolInvocationId, "call", command);
         java.util.List<Map<String, Object>> attempts = new java.util.ArrayList<>();
@@ -206,7 +202,7 @@ public class SshExecuteAdkTool {
     public Map<String,Object> updateConfigFile(
             @Schema(name="path",description="已存在的配置文件绝对路径") String path,
             @Schema(name="expectedContent",description="先用 cat 查询到的完整原内容，包括末尾换行；用于执行前防止覆盖他人修改") String expectedContent,
-            @Schema(name="content",description="准备替换的新配置全文，最大64KiB；直接备份并原子替换，无需审批") String content,
+            @Schema(name="content",description="准备替换的新配置全文，最大64KiB；备份并原子替换，默认权限下先审批") String content,
             @Schema(name="toolContext",optional=true) ToolContext context) {
         String terminal = context == null ? currentTerminalSession.get()
                 : context.state().get("terminalSessionId") instanceof String value ? value : null;
@@ -214,6 +210,9 @@ public class SshExecuteAdkTool {
             return cn.bugstack.ai.domain.ssh.model.valobj.CommandExecutionResult.notSent("NO_TERMINAL", false).toToolResult("修改配置 " + path);
         var guard = toolExecutionAudit == null ? null : toolExecutionAudit.guard(context);
         if (guard != null) guard.checkActive();
+        if (guard != null && guard.requiresApproval())
+            return toolExecutionAudit.requestApproval(toolExecutionAudit.toolContext(context),
+                    "CONFIG", "修改配置 " + path, null, path, expectedContent, content);
         String execution = cn.bugstack.ai.domain.agent.service.approval.ConfigChangePolicy.command(UUID.randomUUID().toString(), path, expectedContent, content);
         long timeout = executionPolicy == null ? 30000 : executionPolicy.commandTimeoutMs();
         if (guard != null) timeout = Math.min(timeout, guard.remainingMillis());

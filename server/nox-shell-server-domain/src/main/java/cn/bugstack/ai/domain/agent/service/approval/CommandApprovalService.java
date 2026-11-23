@@ -52,8 +52,16 @@ public class CommandApprovalService {
                 throw new IllegalArgumentException("服务器或登录账号已变化，请重新生成方案");
             String canonical;
             if(a.kind().equals("CONFIG")) canonical=ConfigChangePolicy.command(a.id(),a.path(),a.expectedContent(),a.content());
-            else {
-                var decision=new CommandPolicyService().check(a.command());
+            else if (BackgroundApprovalPlan.isBackground(a.kind())) {
+                if ("BACKGROUND_COMMAND".equals(a.kind())) {
+                    var plan = BackgroundApprovalPlan.decode(a.executionCommand());
+                    if (!Objects.equals(a.command(), plan.command())
+                            || !"REQUIRE_APPROVAL".equals(new CommandPolicyService().withApproval(plan.command()).decision()))
+                        throw new IllegalArgumentException("该后台命令已不符合审批策略，请重新生成方案");
+                }
+                canonical = a.executionCommand();
+            } else {
+                var decision=new CommandPolicyService().withApproval(a.command());
                 if(!decision.decision().equals("REQUIRE_APPROVAL")) throw new IllegalArgumentException("该操作已不符合审批策略，请重新生成方案");
                 canonical=decision.executionCommand();
             }

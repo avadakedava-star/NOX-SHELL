@@ -9,6 +9,17 @@ import type { AgentRunStage } from '../types'
 
 const BASE = '/api/v1'
 
+export type AgentPermissionMode = 'approval' | 'direct'
+let agentPermissionMode: AgentPermissionMode = 'approval'
+
+export function getAgentPermissionMode(): AgentPermissionMode {
+  return agentPermissionMode
+}
+
+export function setAgentPermissionMode(mode: AgentPermissionMode): void {
+  agentPermissionMode = mode
+}
+
 export type ChatExecutionMode = 'standard' | 'enhanced'
 const CHAT_MODE_KEY = 'nox_shell_chat_execution_mode'
 
@@ -34,6 +45,7 @@ export interface ChatStreamPayload {
   message: string
   terminalSessionId?: string
   executionMode?: ChatExecutionMode
+  permissionMode?: AgentPermissionMode
 }
 
 /** 查询智能体配置列表 */
@@ -122,7 +134,7 @@ export interface CommandApproval {
   connectionId: string
   host: string
   username: string
-  kind: 'COMMAND' | 'CONFIG'
+  kind: 'COMMAND' | 'CONFIG' | 'BACKGROUND_COMMAND' | 'BACKGROUND_CONTAINER'
   command: string
   executionCommand: string
   path?: string
@@ -243,7 +255,11 @@ export async function chatStream(
         Accept: 'text/event-stream, application/json',
         'Cache-Control': 'no-cache',
       },
-      body: JSON.stringify({ ...payload, executionMode: payload.executionMode ?? getChatExecutionMode() }),
+      body: JSON.stringify({
+        ...payload,
+        executionMode: payload.executionMode ?? getChatExecutionMode(),
+        permissionMode: payload.permissionMode ?? getAgentPermissionMode(),
+      }),
       signal: controller.signal,
     })
   } catch (err: any) {

@@ -3,7 +3,8 @@ import * as agentApi from '../api/agent'
 import { playCompleteSound, playErrorSound } from '../utils/sound'
 import { useConnectionStore } from './connectionStore'
 import { ConnectionStatus } from '../types'
-import type { SSEEvent } from '../api/agent'
+import type { CommandApproval, SSEEvent } from '../api/agent'
+import { approvalContinuation } from '../utils/approvalContinuation'
 import type {
   AgentConfig,
   AgentMessage,
@@ -42,8 +43,8 @@ interface AgentStore {
   clearSessionMessages: (id: string) => void
   renameSession: (id: string, name: string) => void
   ensureBackendSession: () => Promise<string | null>
-  sendMessage: (content: string, terminalSessionId?: string | null) => Promise<void>
-  setApprovalResult: (approvalId: string, status: string) => void
+  sendMessage: (content: string, terminalSessionId?: string | null, approvedCommand?: CommandApproval) => Promise<void>
+  setApprovalResult: (approvalId: string, status: string, kind?: CommandApproval['kind']) => void
   loadPersistedSessions: () => void
 }
 
@@ -107,10 +108,12 @@ export function createRunTrace(statusText = DEFAULT_TRACE_STATUS): AgentRunTrace
   }
 }
 
-export function applyApprovalResult(trace: AgentRunTrace, approvalId: string, status: string): AgentRunTrace {
+export function applyApprovalResult(trace: AgentRunTrace, approvalId: string, status: string, kind?: CommandApproval['kind']): AgentRunTrace {
   if(status==='PENDING' || !trace.tools.some(tool=>tool.approvalId===approvalId)) return trace
   const stage: AgentRunTrace['stage']=status==='SUCCEEDED' ? 'completed' : status==='RUNNING' ? 'tool_running' : status==='FAILED' || status==='UNKNOWN' ? 'error' : 'stopped'
   const messages: Record<string,string>={SUCCEEDED:'已批准并执行成功',RUNNING:'操作执行中或结果待核查，请勿重复执行',FAILED:'已批准，但执行失败；请查看确认卡结果',UNKNOWN:'执行结果未知，请先核查服务器',REJECTED:'已拒绝，未执行变更',EXPIRED:'确认方案已过期，未执行变更'}
+  const submitted = status === 'SUCCEEDED' && kind?.startsWith('BACKGROUND_')
+  if (submitted) return {...trace,stage,statusText:'后台任务已提交',stopReason:'approval_submitted',updatedAt:Date.now(),completedAt:Date.now(),error:undefined}
   const text=messages[status] || status
   return {...trace,stage,statusText:text,stopReason:`approval_${status.toLowerCase()}`,updatedAt:Date.now(),completedAt:Date.now(),error:stage==='error' ? text:undefined}
 }
@@ -714,16 +717,16 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     return backendSessionId
   },
 
-  setApprovalResult: (approvalId,status) => {
+  setApprovalResult: (approvalId,status,kind) => {
     set(state=>{
       const sessions=new Map(state.sessions)
       for(const [id,session] of sessions) sessions.set(id,{...session,messages:session.messages.map(message=>
-        message.trace ? {...message,trace:applyApprovalResult(message.trace,approvalId,status)}:message)})
+        message.trace ? {...message,trace:applyApprovalResult(message.trace,approvalId,status,kind)}:message)})
       return {sessions}
     })
     persistSessions(get().sessions,get().currentSessionId)
   },
-  sendMessage: async (content, terminalSessionId) => {
+  sendMessage: async (content, terminalSessionId, approvedCommand) => {
     const state = get()
     const sessionId = state.currentSessionId
     const agentId = state.currentAgentId
@@ -742,7 +745,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       throw new Error('未选择智能体')
     }
 
-    set((currentState) => {
+    if (!approvedCommand) set((currentState) => {
       const namedSessions = withSessionTitleFromMessage(currentState.sessions, sessionId, content)
       return {
         sessions: updateSessionMessages(namedSessions, sessionId, (messages) => [...messages, {
@@ -754,7 +757,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       }
     })
 
-    get().setLoading(true, '已发送，等待 NOX-SHELL 响应...')
+    get().setLoading(true, approvedCommand ? '已执行获批操作，正在核验…' : '已发送，等待 NOX-SHELL 响应...')
 
     let controller: AbortController | null = null
     let hadError = false
@@ -770,6 +773,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         role: 'assistant',
         content: '',
         timestamp: Date.now(),
+        runGoal: approvedCommand ? content : undefined,
         trace: createRunTrace(),
       })
 
@@ -781,7 +785,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           agentId,
           userId: DEFAULT_USER_ID,
           sessionId: backendSessionId,
-          message: content,
+          message: approvedCommand ? approvalContinuation(content, approvedCommand) : content,
+          permissionMode: approvedCommand ? 'approval' : undefined,
           terminalSessionId: targetTerminalSessionId || undefined,
         },
         (event) => {

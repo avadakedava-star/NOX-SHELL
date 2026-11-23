@@ -14,7 +14,7 @@ public record CommandApproval(String id,String userId,String sessionId,String te
         view.put("id",id); view.put("userId",userId); view.put("sessionId",sessionId); view.put("host",host);
         view.put("username",username); view.put("kind",kind); view.put("command",command);
         view.put("terminalSessionId",terminalSessionId); view.put("connectionId",connectionId);
-        view.put("executionCommand",executionCommand); view.put("path",path); view.put("expectedContent",expectedContent);
+        view.put("executionCommand", BackgroundApprovalPlan.isBackground(kind) ? command : executionCommand); view.put("path",path); view.put("expectedContent",expectedContent);
         view.put("content",content); view.put("expiresAt",expiresAt); view.put("status",status); view.put("result",result);
         return view;
     }

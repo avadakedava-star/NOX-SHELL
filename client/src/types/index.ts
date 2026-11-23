@@ -97,6 +97,7 @@ export interface AgentMessage {
   content: string
   timestamp: number
   trace?: AgentRunTrace
+  runGoal?: string
 }
 
 // Agent 会话

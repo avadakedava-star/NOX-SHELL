@@ -3,6 +3,7 @@ import { decideApproval, listApprovals, type CommandApproval } from '../api/agen
 import { useAgentStore } from '../stores/agentStore'
 import { Icon } from './Icon'
 import { formatClockSeconds } from '../utils/format'
+import { approvalOutput, taskForApproval } from '../utils/approvalContinuation'
 
 const USER_ID = 'walissh-user'
 
@@ -31,7 +32,7 @@ export function CommandApprovalCard({ approvalId }: { approvalId: string }) {
         if (!active) return
         const record = items.find(item => item.id === approvalId)
         setApproval(record)
-        if (record && record.status !== 'PENDING') useAgentStore.getState().setApprovalResult(approvalId, record.status)
+        if (record && record.status !== 'PENDING') useAgentStore.getState().setApprovalResult(approvalId, record.status, record.kind)
       }).catch((e) => { if (active) setError(String(e.message)) })
     }
     return () => { active = false }
@@ -50,21 +51,23 @@ export function CommandApprovalCard({ approvalId }: { approvalId: string }) {
     try {
       const result = await decideApproval(approval.id, USER_ID, approval.sessionId, approve)
       setApproval(result)
-      useAgentStore.getState().setApprovalResult(approvalId, result.status)
-      if (result.status === 'SUCCEEDED' && useAgentStore.getState().currentSessionId === currentSessionId && !useAgentStore.getState().isLoading) {
-        const task = [...(session?.messages || [])].reverse().find(message => message.role === 'user')?.content || ''
-        await useAgentStore.getState().sendMessage(`用户已通过确认卡批准并执行操作，审批编号 ${result.id}。操作：${result.command}。执行结果：${result.result}。该操作已经执行，请勿重复。请基于结果继续完成原任务；新的变更仍须单独确认。原任务：${task}`, result.terminalSessionId)
+      useAgentStore.getState().setApprovalResult(approvalId, result.status, result.kind)
+      if (result.status === 'SUCCEEDED' && !result.kind.startsWith('BACKGROUND_') && useAgentStore.getState().currentSessionId === currentSessionId && !useAgentStore.getState().isLoading) {
+        const task = taskForApproval(session?.messages ?? [], approvalId)
+        await useAgentStore.getState().sendMessage(task, result.terminalSessionId, result)
       }
     } catch (e) {
       setError((e as Error).message)
       // 响应丢失可能发生在执行之后，只查询保存状态，不自动再次批准或执行。
       try {
         const saved = (await listApprovals(USER_ID, approval.sessionId)).find(item => item.id === approvalId)
-        if (saved) { setApproval(saved); useAgentStore.getState().setApprovalResult(approvalId, saved.status) }
+        if (saved) { setApproval(saved); useAgentStore.getState().setApprovalResult(approvalId, saved.status, saved.kind) }
       } catch { /* 保留原始错误 */ }
     } finally { setBusy(false) }
   }
 
+  const isBackground = approval?.kind.startsWith('BACKGROUND_') ?? false
+  const execution = approvalOutput(approval?.result)
   const expired = Boolean(approval && approval.status === 'PENDING' && approval.expiresAt <= now)
   const remaining = approval && approval.status === 'PENDING'
     ? Math.max(0, Math.floor((approval.expiresAt - now) / 1000))
@@ -87,7 +90,7 @@ export function CommandApprovalCard({ approvalId }: { approvalId: string }) {
               <dt>目标</dt>
               <dd>{approval.host}{approval.username ? ` · ${approval.username}` : ''}</dd>
               <dt>类型</dt>
-              <dd>{approval.kind === 'CONFIG' ? '配置文件变更' : '命令执行'}</dd>
+              <dd>{approval.kind === 'CONFIG' ? '配置文件变更' : isBackground ? '后台任务' : '命令执行'}</dd>
             </dl>
 
             <pre className="approval-cmd">{approval.kind === 'CONFIG' ? approval.command : approval.executionCommand}</pre>
@@ -123,15 +126,16 @@ export function CommandApprovalCard({ approvalId }: { approvalId: string }) {
             ) : (
               <div className="approval-state" data-status={expired ? 'EXPIRED' : approval.status}>
                 <span className="nox-dot" data-tone={approval.status === 'SUCCEEDED' && !expired ? 'ok' : 'warn'} />
-                {expired ? STATUS_TEXT.EXPIRED : STATUS_TEXT[approval.status] ?? approval.status}
+                {expired ? STATUS_TEXT.EXPIRED : isBackground && approval.status === 'SUCCEEDED' ? '已提交后台任务' : STATUS_TEXT[approval.status] ?? approval.status}
               </div>
             )}
 
             {approval.result && (
-              <>
-                <div className="u-caps" style={{ marginTop: 2 }}>执行结果</div>
-                <pre style={{ marginTop: 0 }}>{approval.result}</pre>
-              </>
+              <details>
+                <summary>{isBackground ? '后台任务详情' : '执行详情'}{execution.exitCode !== undefined ? ' · 退出码 ' + execution.exitCode : ''}</summary>
+                {execution.taskId && <p>任务编号 {execution.taskId}</p>}
+                {execution.output && <pre style={{ marginTop: 0 }}>{execution.output}</pre>}
+              </details>
             )}
           </>
         ) : !error ? (

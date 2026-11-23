@@ -1405,6 +1405,7 @@ body.theme-dark .nox-send { color: #14030a; }
   background: transparent;
   transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
+.nox-permission-picker { min-width: 0; max-width: 50%; display: block; }
 .nox-agent-picker:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); border-color: var(--line); color: var(--ink); }
 .nox-agent-picker .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); flex: none; }
 .nox-agent-picker svg { width: 10px; height: 10px; opacity: .6; flex: none; }

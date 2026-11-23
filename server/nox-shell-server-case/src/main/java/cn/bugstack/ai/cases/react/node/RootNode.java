@@ -35,6 +35,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component("reactRootNode")
 public class RootNode extends AbstractAIAgentReActSupport {
 
+    private static final java.util.regex.Pattern LEGACY_APPROVAL_MESSAGE = java.util.regex.Pattern.compile(
+            "用户已通过确认卡批准并执行操作，审批编号 [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}。操作：",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+
     @Resource
     private ILongTermMemoryService longTermMemoryService;
 
@@ -80,9 +85,13 @@ public class RootNode extends AbstractAIAgentReActSupport {
         // case 层不再直接调用仓储层。
         List<ChatMessageEntity> recentMessages = longTermMemoryService.getRecentMessages(sessionId, 50);
         for (ChatMessageEntity msg : recentMessages) {
+            String content = msg.getContent() != null ? msg.getContent() : "";
+            // 旧客户端将审批输出和上一轮续跑消息一起写成用户消息，跳过这些历史副本。
+            if ("user".equals(msg.getRole()) && LEGACY_APPROVAL_MESSAGE.matcher(content).lookingAt()
+                    && content.contains("。执行结果：") && content.contains("。原任务：")) continue;
             Map<String, Object> map = new HashMap<>();
             map.put("role", msg.getRole());
-            map.put("content", msg.getContent() != null ? msg.getContent() : "");
+            map.put("content", content);
             // tool 消息需要补全 tool_call_id 和 name，供 ADK 框架正确关联
             if ("tool".equals(msg.getRole()) && msg.getToolCallId() != null) {
                 map.put("tool_call_id", msg.getToolCallId());

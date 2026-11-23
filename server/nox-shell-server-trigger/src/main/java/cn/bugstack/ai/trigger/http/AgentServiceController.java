@@ -1,5 +1,6 @@
 package cn.bugstack.ai.trigger.http;
 
+import cn.bugstack.ai.domain.agent.service.execution.AgentPermissionMode;
 import cn.bugstack.ai.api.IAgentService;
 import cn.bugstack.ai.api.dto.*;
 import cn.bugstack.ai.api.response.Response;
@@ -167,9 +168,16 @@ public class AgentServiceController implements IAgentService {
             }
 
             requestDTO.setSessionId(sessionId);
-            List<String> messages = enhancedMode(requestDTO)
-                    ? List.of(reactServiceCase.chat(requestDTO))
-                    : chatService.handleMessage(requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
+            var permissionMode = AgentPermissionMode.parse(requestDTO.getPermissionMode());
+            List<String> messages;
+            if (enhancedMode(requestDTO)) {
+                messages = List.of(reactServiceCase.chat(requestDTO));
+            } else {
+                try (var subscription = toolExecutionAudit.subscribe(requestDTO.getUserId(), sessionId, permissionMode, notification -> {})) {
+                    chatService.bindTerminalSession(sessionId, requestDTO.getTerminalSessionId());
+                    messages = chatService.handleMessage(requestDTO.getAgentId(), requestDTO.getUserId(), sessionId, requestDTO.getMessage());
+                }
+            }
 
             ChatResponseDTO responseDTO = new ChatResponseDTO();
             responseDTO.setContent(String.join("\n", messages));
@@ -209,7 +217,7 @@ public class AgentServiceController implements IAgentService {
             final String chatSession=sessionId;
             Set<String> calls=ConcurrentHashMap.newKeySet(), results=ConcurrentHashMap.newKeySet();
             var activeControl=new AtomicReference<RunStreamControl>();
-            var subscription=toolExecutionAudit.subscribe(request.getUserId(),chatSession,notification->{
+            var subscription=toolExecutionAudit.subscribe(request.getUserId(),chatSession,AgentPermissionMode.parse(request.getPermissionMode()),notification->{
                 var active=activeControl.get();
                 if(active!=null && !active.closed()) synchronized(active){sendAuditEvent(emitter,notification,calls,results);}
             });

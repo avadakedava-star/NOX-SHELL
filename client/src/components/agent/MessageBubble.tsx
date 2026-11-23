@@ -4,17 +4,21 @@ import { formatMarkdown } from '../../utils/markdown'
 import { formatClock } from '../../utils/format'
 import { AgentRun } from './AgentRun'
 import { Icon } from '../Icon'
+import { isLegacyApprovalMessage } from '../../utils/approvalContinuation'
 
 const ROLE_LABEL = { user: 'YOU', assistant: 'NOX', system: 'SYSTEM' } as const
 
 export const MessageBubble = memo(function MessageBubble({ message, goal }: { message: AgentMessage; goal?: string }) {
   const [copied, setCopied] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
-  const renderedContent = useMemo(() => (message.content ? formatMarkdown(message.content) : ''), [message.content])
+  const legacyApproval = isLegacyApprovalMessage(message)
+  const displayRole = legacyApproval ? 'system' : message.role
+  const content = legacyApproval ? '已批准操作，继续处理原任务。' : message.content
+  const renderedContent = useMemo(() => (content ? formatMarkdown(content) : ''), [content])
 
   const handleCopy = () => {
-    if (!message.content) return
-    void navigator.clipboard.writeText(message.content).then(() => {
+    if (!content) return
+    void navigator.clipboard.writeText(content).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1600)
     })
@@ -37,17 +41,17 @@ export const MessageBubble = memo(function MessageBubble({ message, goal }: { me
     }
     el.addEventListener('click', onClick)
     return () => el.removeEventListener('click', onClick)
-  }, [message.content])
+  }, [content])
 
   const streaming = message.role === 'assistant' && message.trace && !['completed', 'error', 'stopped', 'paused', 'waiting_approval'].includes(message.trace.stage)
 
   return (
-    <article className="nox-msg msg-enter" data-role={message.role}>
+    <article className="nox-msg msg-enter" data-role={displayRole}>
       <header className="nox-msg-head">
         <span className="nox-msg-role-mark" />
-        <span className="nox-msg-role">{ROLE_LABEL[message.role]}</span>
+        <span className="nox-msg-role">{ROLE_LABEL[displayRole]}</span>
         <span className="nox-msg-time">{formatClock(message.timestamp)}</span>
-        {message.content && (
+        {content && !legacyApproval && (
           <span className="nox-msg-actions">
             <button className="nox-icon-btn" onClick={handleCopy} title={copied ? '已复制' : '复制回答'} aria-label="复制回答">
               {copied ? <Icon.Check size={12} /> : <Icon.Copy size={12} />}
@@ -57,10 +61,10 @@ export const MessageBubble = memo(function MessageBubble({ message, goal }: { me
       </header>
 
       {message.role === 'assistant' && message.trace && (
-        <AgentRun trace={message.trace} goal={goal} />
+        <AgentRun trace={message.trace} goal={message.runGoal ?? goal} />
       )}
 
-      {message.content ? (
+      {content ? (
         <div className="nox-msg-body md" ref={contentRef} dangerouslySetInnerHTML={{ __html: renderedContent }} />
       ) : message.role === 'assistant' && !message.trace ? (
         <div className="nox-msg-body" style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ink-3)' }}>

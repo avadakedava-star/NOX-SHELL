@@ -13,6 +13,9 @@ public class ChatRequestDTO {
     /** standard：直接执行；enhanced：经过 case 历史恢复与上下文增强。缺省为 standard。 */
     private String executionMode;
 
+    /** approval（默认）或 direct。 */
+    private String permissionMode;
+
     /**
      * SSH 终端会话 ID（用于智能体执行命令）
      * 如果未指定，系统将尝试从会话绑定中获取

@@ -13,6 +13,7 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -272,7 +273,7 @@ public class LLMIntentClassifier implements IIntentClassifier {
      * @return 解析后的 IntentResultVO，失败时返回 UNKNOWN
      */
     @SuppressWarnings("unchecked")
-    private IntentResultVO parseResponse(String response) {
+    IntentResultVO parseResponse(String response) {
         try {
             // 提取 JSON 部分
             String json = response.replaceAll("(?s).*?(\\{.*}).*", "$1");
@@ -282,8 +283,15 @@ public class LLMIntentClassifier implements IIntentClassifier {
                     String.valueOf(parsed.get("intent")).toUpperCase());
             double confidence = parsed.containsKey("confidence")
                     ? Double.parseDouble(String.valueOf(parsed.get("confidence"))) : 0.5;
-            Map<String, String> entities = parsed.containsKey("entities")
-                    ? (Map<String, String>) parsed.get("entities") : Map.of();
+            Map<String, String> entities = new LinkedHashMap<>();
+            if (parsed.get("entities") instanceof Map<?, ?> rawEntities) {
+                rawEntities.forEach((key, value) -> {
+                    if (key instanceof String name &&
+                            (value instanceof String || value instanceof Boolean || value instanceof Number)) {
+                        entities.put(name, value.toString());
+                    }
+                });
+            }
 
             List<IntentTypeEnumVO> candidates = List.of();
             if (parsed.containsKey("candidates")) {

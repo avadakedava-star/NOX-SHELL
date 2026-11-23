@@ -51,10 +51,54 @@ public class CommandApprovalTest {
         assertTrue(repository.items.isEmpty());
     }
     @Test public void staleCommandApprovalsCannotReplayUnderNewPolicy() {
-        var a=pending();
+        var a=service.create(context(), "COMMAND", "docker start demo",
+                "command -p 'docker' 'start' 'demo'", null, null, null);
         assertThrows(IllegalArgumentException.class,()->executor.decide(a.id(),"user","chat",true));
         verify(terminals,never()).executeStructured(anyString(),anyString(),anyLong());
     }
+    @Test public void approvalSavesExactCommandAndExecutesOnce() {
+        var request = context();
+        String command = "docker start demo";
+        var decision = new CommandPolicyService().withApproval(command);
+        var result = audit.requestApproval(request, "COMMAND", command, decision.executionCommand(), null, null, null);
+        assertEquals("WAITING_APPROVAL", request.guard().stopReason());
+        assertEquals("WAITING_APPROVAL", result.get("executionStatus"));
+        verify(terminals, never()).executeStructured(anyString(), anyString(), anyLong());
+
+        String id = (String) result.get("approvalId");
+        assertEquals("SUCCEEDED", executor.decide(id, "user", "chat", true).get("status"));
+        assertThrows(IllegalArgumentException.class, () -> executor.decide(id, "user", "chat", true));
+        verify(terminals, times(1)).executeStructured(eq("terminal"), eq(command), anyLong());
+    }
+
+    @Test public void backgroundPlanQueuesOnlyAfterApproval() throws Exception {
+        var tasks = mock(cn.bugstack.ai.domain.agent.service.task.LongTaskService.class);
+        var field = ApprovedCommandExecutor.class.getDeclaredField("longTasks");
+        field.setAccessible(true);
+        field.set(executor, tasks);
+        var task = new cn.bugstack.ai.domain.agent.service.task.AgentTask();
+        task.id = "job";
+        String command = "apt-get install -y nginx";
+        when(tasks.submitCommand(any(), eq("安装软件"), eq(command), eq(600))).thenReturn(task);
+        var plan = new BackgroundApprovalPlan("安装软件", command, 600, null);
+        var proposal = audit.requestApproval(context(), "BACKGROUND_COMMAND", command, plan.encode(), null, null, null);
+        verifyNoInteractions(tasks);
+        String id = (String) proposal.get("approvalId");
+        assertEquals("SUCCEEDED", executor.decide(id, "user", "chat", true).get("status"));
+        assertThrows(IllegalArgumentException.class, () -> executor.decide(id, "user", "chat", true));
+        verify(tasks, times(1)).submitCommand(any(), eq("安装软件"), eq(command), eq(600));
+        verify(terminals, never()).executeStructured(anyString(), anyString(), anyLong());
+    }
+
+    @Test public void thePermissionChoiceIsScopedToOneRequest() {
+        try (var subscription = audit.subscribe("user", "chat", AgentPermissionMode.DIRECT, event -> {})) {
+            assertFalse(subscription.guard().requiresApproval());
+        }
+        try (var subscription = audit.subscribe("user", "chat", event -> {})) {
+            assertTrue(subscription.guard().requiresApproval());
+        }
+    }
+
     @Test public void rejectionNeverRunsCommandAndCannotBeApprovedLater() {
         var a=pending(); assertEquals("REJECTED",executor.decide(a.id(),"user","chat",false).get("status"));
         assertThrows(IllegalArgumentException.class,()->executor.decide(a.id(),"user","chat",true));

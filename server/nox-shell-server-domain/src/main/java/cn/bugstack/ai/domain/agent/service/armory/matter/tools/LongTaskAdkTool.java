@@ -1,5 +1,7 @@
 package cn.bugstack.ai.domain.agent.service.armory.matter.tools;
 import cn.bugstack.ai.domain.agent.service.task.*;
+import cn.bugstack.ai.domain.agent.service.approval.BackgroundApprovalPlan;
+import cn.bugstack.ai.domain.ssh.service.policy.CommandPolicyService;
 import cn.bugstack.ai.domain.agent.service.audit.*;
 import com.google.adk.tools.ToolContext;
 import com.google.adk.tools.Annotations.Schema;
@@ -20,9 +22,18 @@ public class LongTaskAdkTool {
     private Map<String,Object> submitted(AgentTask task){return Map.of("success",true,"executionStatus","TASK_SUBMITTED","taskId",task.id,"taskStatus",task.status,"output","任务已保存并交由后台执行，不代表部署成功。立即向用户说明任务编号和当前阶段，结束本轮答复，不循环查询；页面会持续显示进度。","task",tasks.view(task));}
     public Map<String,Object> submitLongCommand(
         @Schema(name="title",description="任务的简短中文名称")String title,
-        @Schema(name="command",description="可能超过30秒的安装、下载、构建命令；仍检查危险操作黑名单。以独立远端作业执行，退出码/日志会保存。不要附加睡眠轮询")String command,
+        @Schema(name="command",description="可能超过30秒的安装、下载、构建命令；仍检查危险操作黑名单。默认先审批，批准后以独立远端作业执行，退出码/日志会保存。直接提交安装命令以保留真实退出码，日志由工具收集。确需更新软件源再安装时，可用 && 合成同一变更方案。不要附加日志管道、echo 退出码或睡眠轮询")String command,
         @Schema(name="timeoutSeconds",description="0或不传：按原作业状态和活动观察，不按聊天总时限杀进程。仅用户明确要求限定执行时长时填1到86400秒；该显式限制会终止远端命令",optional=true)Integer timeoutSeconds,
-        @Schema(name="toolContext",optional=true)ToolContext toolContext){return result(()->submitted(tasks.submitCommand(context(toolContext),title,command,timeoutSeconds==null?0:timeoutSeconds)));}
+        @Schema(name="toolContext",optional=true)ToolContext toolContext){return result(()->{
+            var request = context(toolContext);
+            int timeout = timeoutSeconds == null ? 0 : timeoutSeconds;
+            if (!request.guard().requiresApproval()) return submitted(tasks.submitCommand(request, title, command, timeout));
+            var decision = new CommandPolicyService().withApproval(command);
+            if (decision.allowed()) return submitted(tasks.submitCommand(request, title, command, timeout));
+            if (!"REQUIRE_APPROVAL".equals(decision.decision())) return decision.blockedToolResult(command);
+            var plan = new BackgroundApprovalPlan(title, command, timeout, null);
+            return audit.requestApproval(request, "BACKGROUND_COMMAND", command, plan.encode(), null, null, null);
+        });}
     public Map<String,Object> deployContainer(
         @Schema(name="image",description="完整镜像名称与标签，例如 mysql:8.0")String image,
         @Schema(name="name",description="容器名称；同名已有容器会先核查配置，不删除或覆盖")String name,
@@ -37,7 +48,15 @@ public class LongTaskAdkTool {
             String readiness=readinessCommand;String base=image.substring(image.lastIndexOf('/')+1).toLowerCase(Locale.ROOT);
             if((readiness==null || readiness.isBlank()) && (base.startsWith("mysql:") || base.startsWith("mysql@")))readiness="mysqladmin --connect-timeout=3 -h127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\" ping --silent";
             var spec=new AgentTask.ContainerSpec(image,name,bindAddress==null?"127.0.0.1":bindAddress,hostPort,containerPort,environment==null?Map.of():Map.copyOf(environment),arguments==null?List.of():List.copyOf(arguments),volumes==null?List.of():List.copyOf(volumes),readiness,policy.readinessSeconds());
-            return submitted(tasks.submitContainer(context(toolContext),spec));
+            var request = context(toolContext);
+            if (!request.guard().requiresApproval()) return submitted(tasks.submitContainer(request, spec));
+            var plan = new BackgroundApprovalPlan(null, null, 0, spec);
+            String summary = "部署容器 " + spec.name() + " · 镜像 " + spec.image() + " · 端口 "
+                    + spec.bindAddress() + ":" + spec.hostPort() + " → " + spec.containerPort();
+            if (!spec.volumes().isEmpty()) summary += "\n挂载：" + String.join(", ", spec.volumes());
+            if (!spec.arguments().isEmpty()) summary += "\n启动参数：" + spec.arguments();
+            if (!spec.environment().isEmpty()) summary += "\n环境变量：" + String.join(", ", spec.environment().keySet());
+            return audit.requestApproval(request, "BACKGROUND_CONTAINER", summary, plan.encode(), null, null, null);
         });}
     public Map<String,Object> getTask(@Schema(name="taskId",description="已有任务编号，只查询不重新提交")String taskId,@Schema(name="toolContext",optional=true)ToolContext toolContext){return result(()->{var c=context(toolContext);return Map.of("success",true,"task",tasks.detail(taskId,c.userId(),c.sessionId()));});}
     public Map<String,Object> cancelTask(@Schema(name="taskId",description="仅在用户明确要求取消后台任务时调用；停止生成不等于取消任务")String taskId,@Schema(name="toolContext",optional=true)ToolContext toolContext){return result(()->{var c=context(toolContext);tasks.cancel(taskId,c.userId(),c.sessionId());return Map.of("success",true,"output","已请求取消后续步骤，正在核查远端执行状态；已有资源不会删除");});}

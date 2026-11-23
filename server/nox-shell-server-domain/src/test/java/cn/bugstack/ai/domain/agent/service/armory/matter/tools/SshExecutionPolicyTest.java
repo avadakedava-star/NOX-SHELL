@@ -1,6 +1,13 @@
 package cn.bugstack.ai.domain.agent.service.armory.matter.tools;
 
 import cn.bugstack.ai.domain.ssh.model.valobj.CommandExecutionResult;
+import cn.bugstack.ai.domain.agent.service.audit.ToolAuditContext;
+import cn.bugstack.ai.domain.agent.service.audit.ToolExecutionAudit;
+import cn.bugstack.ai.domain.agent.service.execution.AgentPermissionMode;
+import cn.bugstack.ai.domain.agent.service.execution.ExecutionPolicyProperties;
+import cn.bugstack.ai.domain.agent.service.execution.RequestExecutionGuard;
+import com.google.adk.tools.ToolContext;
+import java.util.Map;
 import cn.bugstack.ai.domain.ssh.service.ISshTerminalService;
 import org.junit.After;
 import org.junit.Test;
@@ -14,6 +21,42 @@ public class SshExecutionPolicyTest {
         SshExecuteAdkTool.setCurrentTerminalSession("terminal"); return tool;
     }
     @After public void cleanup(){SshExecuteAdkTool.clearCurrentTerminalSession();}
+    @Test public void connectedChatUsesSelectedModeBeforeDispatch() throws Exception {
+        var service = mock(ISshTerminalService.class);
+        when(service.executeStructured(anyString(), anyString(), anyLong())).thenReturn(CommandExecutionResult.completed(0, "ok", ""));
+        var tool = tool(service);
+        var audit = mock(ToolExecutionAudit.class);
+        var field = SshExecuteAdkTool.class.getDeclaredField("toolExecutionAudit");
+        field.setAccessible(true);
+        field.set(tool, audit);
+
+        var adk = mock(ToolContext.class, RETURNS_DEEP_STUBS);
+        when(adk.state().get("terminalSessionId")).thenReturn("terminal");
+        var guard = new RequestExecutionGuard(ExecutionPolicyProperties.defaults(), System.currentTimeMillis() + 60000);
+        var context = new ToolAuditContext("request", "user", "chat", "invocation", "agent", "terminal", null, null, guard);
+        when(audit.guard(adk)).thenReturn(guard);
+        when(audit.toolContext(adk)).thenReturn(context);
+
+        var mixed = tool.executeCommand("which nginx; nginx -t 2>&1; journalctl -u nginx -n 30 --no-pager", adk);
+        assertEquals("REWRITE_REQUIRED", mixed.get("policyDecision"));
+        assertEquals(false, mixed.get("commandDispatched"));
+        verifyNoInteractions(service);
+
+        String command = "docker start demo";
+        when(audit.requestApproval(context, "COMMAND", command, command, null, null, null))
+                .thenReturn(Map.of("executionStatus", "WAITING_APPROVAL", "approvalId", "approval"));
+        assertEquals("WAITING_APPROVAL", tool.executeCommand(command, adk).get("executionStatus"));
+        verifyNoInteractions(service);
+        assertEquals(true, tool.executeCommand("docker ps", adk).get("success"));
+
+        var direct = new RequestExecutionGuard(ExecutionPolicyProperties.defaults(), System.currentTimeMillis() + 60000,
+                System::currentTimeMillis, AgentPermissionMode.DIRECT);
+        when(audit.guard(adk)).thenReturn(direct);
+        assertEquals(true, tool.executeCommand(command, adk).get("success"));
+        verify(service, times(1)).executeStructured(eq("terminal"), eq(command), anyLong());
+        verify(audit, times(1)).requestApproval(context, "COMMAND", command, command, null, null, null);
+    }
+
     @Test public void blockedCommandNeverCallsSshService() throws Exception {
         var service=mock(ISshTerminalService.class); var tool=tool(service);
         assertEquals("BLOCKED",tool.executeCommand("sudo /bin/rm -r -f /",null).get("executionStatus"));

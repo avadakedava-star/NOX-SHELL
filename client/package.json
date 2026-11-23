@@ -10,7 +10,8 @@
     "test:execution-state": "node scripts/test-execution-state.mjs",
     "test:terminal-binding": "node scripts/test-terminal-binding.mjs",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:approval-continuation": "node scripts/test-approval-continuation.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

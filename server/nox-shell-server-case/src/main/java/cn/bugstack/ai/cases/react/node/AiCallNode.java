@@ -1,5 +1,6 @@
 package cn.bugstack.ai.cases.react.node;
 
+import cn.bugstack.ai.domain.agent.service.execution.AgentPermissionMode;
 import cn.bugstack.ai.api.dto.ChatRequestDTO;
 import cn.bugstack.ai.api.dto.ReActResultDTO;
 import cn.bugstack.ai.cases.react.AbstractAIAgentReActSupport;
@@ -191,7 +192,8 @@ public class AiCallNode extends AbstractAIAgentReActSupport {
 
         if (dynamicContext.getAuditSubscription() == null) {
             dynamicContext.setAuditSubscription(toolExecutionAudit.subscribe(dynamicContext.getUserId(),
-                    dynamicContext.getSessionId(), notification -> recordToolExecution(dynamicContext, notification.record())));
+                    dynamicContext.getSessionId(), AgentPermissionMode.parse(requestParameter.getPermissionMode()),
+                    notification -> recordToolExecution(dynamicContext, notification.record())));
         }
         try (var observer = dynamicContext.getEventSink() == null ? null
                 : dynamicContext.getAuditSubscription().observe(notification -> recordToolExecution(dynamicContext, notification.record()))) {

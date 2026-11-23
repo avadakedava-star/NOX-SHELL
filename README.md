@@ -11,6 +11,7 @@ SSH 智能运维助手，包含 React / TypeScript 前端与 Java 17 / Spring Bo
 - NOX-SHELL 前端改版、可调整面板，以及明确的服务和 SSH 连接提示。
 - 普通/增强模式切换，重连后同步终端上下文，聊天发送入口统一绑定终端。
 - 根据执行证据观察进展，停滞时先核查再暂停；模型进展报告须引用真实执行记录。
+- 默认权限下，已识别的只读命令直接执行。需要修改服务器的操作先生成审批卡，批准后按原方案执行。
 
 ## 目录
 
@@ -50,7 +51,7 @@ cd ..
 ./start-local.ps1
 ```
 
-前端地址为 `http://127.0.0.1:5173/`，后端端口为 `8091`。`maven-settings.xml` 与启动脚本默认使用本机 `7897` 代理，按实际环境调整。后台前端使用 Windows 任务计划托管；也可在 `client` 中手动运行 `npm run dev`。
+前端地址为 `http://127.0.0.1:5173/`，后端端口为 `8091`。`maven-settings.xml` 与启动脚本默认使用本机 `7897` 代理，按实际环境调整。Windows 一键启动使用 Python 3（pythonw.exe）和任务计划托管前端，等待前后端就绪后打开浏览器。也可在 `client` 中手动运行 `npm run dev`。
 
 模型地址和名称通过 `MODEL_BASE_URL`、`MODEL_NAME` 配置，配置入口为 `server/nox-shell-server-app/src/main/resources/agent/ssh-agent.yml`。可选手工集成测试需要自行配置模型、SSH 和数据库环境。
 
@@ -62,7 +63,11 @@ cd ..
 
 ## 本次更新与验证
 
-详见 [更新说明](docs/updates/2026-11-11-final-test.md)。前端可运行 `npm run test:terminal-binding`、`npm run test:execution-state` 和 `npm run test:chat-mode`。这些测试使用模拟请求，不会连接模型或服务器。后端手工集成测试仍需要自行配置环境。
+2026-11-23 版增加命令权限选择与变更审批，改进服务器状态查询、同一终端的命令排队和 Windows 一键启动。详见 [Agent 权限说明](Agent权限说明.md) 和 [一键启动说明](一键启动说明.md)。
+
+前端可运行 `npm run test:approval-continuation`、`npm run test:terminal-binding`、`npm run test:execution-state` 和 `npm run test:chat-mode`。这些测试使用模拟请求，不会连接模型或服务器。后端手工集成测试需要自行配置环境。
+
+上一版详见 [2026-11-11 更新说明](docs/updates/2026-11-11-final-test.md)。
 
 ## 来源与致谢
 

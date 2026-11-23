@@ -4,6 +4,7 @@ import { useAgentStore } from '../stores/agentStore'
 import { useConnectionStore } from '../stores/connectionStore'
 import { ConnectionStatus } from '../types'
 import { TaskProgressPanel } from './TaskProgressPanel'
+import { lastUserTask } from '../utils/approvalContinuation'
 import { Composer } from './agent/Composer'
 import { MessageBubble } from './agent/MessageBubble'
 import { RunCapsule, TERMINAL_STAGES } from './agent/AgentRun'
@@ -122,15 +123,8 @@ export function RightSidebar({ width = 408, historyVisible = false, onToggleHist
 
   // 任务目标：每条 assistant 消息对应它之前最近的一条用户消息
   const goalFor = (index: number): string | undefined => {
-    if (!currentSession) return undefined
-    for (let i = index - 1; i >= 0; i -= 1) {
-      const message = currentSession.messages[i]
-      if (message.role === 'user' && message.content.trim()) {
-        const text = message.content.replace(/\s+/g, ' ').trim()
-        return text.length > 72 ? `${text.slice(0, 72)}…` : text
-      }
-    }
-    return undefined
+    const text = lastUserTask(currentSession?.messages ?? [], index)?.replace(/\s+/g, ' ').trim()
+    return text && text.length > 72 ? text.slice(0, 72) + '…' : text
   }
 
   return (

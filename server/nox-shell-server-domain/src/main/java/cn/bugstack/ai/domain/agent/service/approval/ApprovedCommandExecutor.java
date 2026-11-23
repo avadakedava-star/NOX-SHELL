@@ -15,6 +15,8 @@ public class ApprovedCommandExecutor {
     private final ToolExecutionAudit audit;
     private final ExecutionPolicyProperties policy;
     private final int commandTimeoutMs;
+    @org.springframework.beans.factory.annotation.Autowired
+    private cn.bugstack.ai.domain.agent.service.task.LongTaskService longTasks;
     public ApprovedCommandExecutor(CommandApprovalService approvals,ISshTerminalService terminals,ToolExecutionAudit audit,ExecutionPolicyProperties policy) {
         this(approvals,terminals,audit,policy,300000);
     }
@@ -32,6 +34,7 @@ public class ApprovedCommandExecutor {
         ToolExecutionRecord record;
         try { record=audit.started(context,"approvedChange",Map.of("approvalId",id,"command",a.command(),"connectionId",a.connectionId())); }
         catch(RuntimeException e) { approvals.finish(a,"FAILED","审计开始失败，命令未发送"); throw e; }
+        if (BackgroundApprovalPlan.isBackground(a.kind())) return submitBackground(a, context, record);
         CommandExecutionResult result;
         try { result=terminals.executeStructured(a.terminalSessionId(),a.executionCommand(),commandTimeoutMs); }
         catch(RuntimeException e) { result=CommandExecutionResult.unknown("","执行异常，请核查服务器，禁止直接重做","EXECUTION_EXCEPTION"); }
@@ -42,5 +45,28 @@ public class ApprovedCommandExecutor {
         try { encoded=new ObjectMapper().writeValueAsString(toolResult); } catch(Exception e) {throw new IllegalStateException("执行已发生，但结果编码失败，请核查服务器",e);}
         String state=result.status().equals("SUCCEEDED") ? "SUCCEEDED" : result.status().equals("UNKNOWN") ? "UNKNOWN" : "FAILED";
         return approvals.finish(a,state,encoded).view();
+    }
+
+    private Map<String, Object> submitBackground(CommandApproval approval, ToolAuditContext context,
+                                                 ToolExecutionRecord record) {
+        Map<String, Object> result;
+        String status;
+        try {
+            var plan = BackgroundApprovalPlan.decode(approval.executionCommand());
+            var task = plan.container() == null
+                    ? longTasks.submitCommand(context, plan.title(), plan.command(), plan.timeoutSeconds())
+                    : longTasks.submitContainer(context, plan.container());
+            result = Map.of("success", true, "executionStatus", "TASK_SUBMITTED", "taskId", task.id,
+                    "output", "已提交后台任务，请查看任务进度。");
+            status = "SUCCEEDED";
+        } catch (IllegalArgumentException error) {
+            result = Map.of("success", false, "executionStatus", "FAILED", "output", audit.safeText(error.getMessage()));
+            status = "FAILED";
+        } catch (RuntimeException error) {
+            result = Map.of("success", false, "executionStatus", "UNKNOWN", "output", "提交结果未知，请核对任务列表。");
+            status = "UNKNOWN";
+        }
+        audit.returned(record, result);
+        return approvals.finish(approval, status, new ObjectMapper().valueToTree(result).toString()).view();
     }
 }
