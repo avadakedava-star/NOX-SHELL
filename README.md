@@ -63,6 +63,10 @@ cd ..
 
 ## 本次更新与验证
 
+2026-11-24 版加入 NetPilot 网枢，可检查网站访问问题、生成报障单并在恢复后复测。需要服务器侧证据时，可启用只读接口查询预先登记的 systemd 服务。详见 [NetPilot 使用与测试说明](integrations/teleagent/netpilot/README.md)。
+
+TeleAgent 还可使用 [证据交接 Skill](integrations/teleagent/netpilot-evidence/SKILL.md) 和 [final-test 文本问答桥接](integrations/teleagent/final-test-bridge/SKILL.md)。
+
 2026-11-23 版增加命令权限选择与变更审批，改进服务器状态查询、同一终端的命令排队和 Windows 一键启动。详见 [Agent 权限说明](Agent权限说明.md) 和 [一键启动说明](一键启动说明.md)。
 
 前端可运行 `npm run test:approval-continuation`、`npm run test:terminal-binding`、`npm run test:execution-state` 和 `npm run test:chat-mode`。这些测试使用模拟请求，不会连接模型或服务器。后端手工集成测试需要自行配置环境。
